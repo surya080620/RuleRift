@@ -1,0 +1,24 @@
+{
+  "name": "rulerift",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/surya080620/RuleRift.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/surya080620/RuleRift/issues"
+  },
+  "homepage": "https://github.com/surya080620/RuleRift#readme",
+  "dependencies": {
+    "phaser": "^3.90.0"
+  }
+}
