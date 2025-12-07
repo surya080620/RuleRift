@@ -9,4 +9,5 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
-print("hello");history
+print("hello");
+print("hi")
