@@ -1,39 +1,16 @@
 html,body {
-  margin:0;
-  height:100%;
-  background:#121217;
-  color:#eee;
-  font-family: Inter, system-ui, Arial, sans-serif;
-}
-
-#game-container {
-  width: 760px;
-  margin: 20px auto;
-  background: linear-gradient(#0f0f13, #0a0a0d);
-  border-radius: 10px;
-  padding: 10px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.7);
-}
-
-.top-ui {
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding:8px 12px;
+  height:100%; margin:0; background:#111216; font-family: Inter, system-ui, Arial;
   color:#ddd;
 }
-
-.btn {
-  background:#2f8ed9;
-  color:white;
-  padding:6px 10px;
-  border-radius:6px;
-  cursor:pointer;
-  font-weight:600;
-  user-select:none;
+#game-container {
+  width: 760px;
+  margin: 18px auto;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+  background: linear-gradient(180deg,#14141a,#0f0f15);
 }
-
-.small {
-  font-size:12px;
-  opacity:0.9;
-}
+.top-bar { padding:10px; display:flex; justify-content:space-between; align-items:center; }
+.btn { background:#2f8ed9; color:white; padding:6px 10px; border-radius:6px; cursor:pointer; user-select:none; }
+.small { font-size:.9rem; color:#cfcfcf; }
+.instructions { font-size:13px; color:#bfbfbf; padding:6px 12px; }

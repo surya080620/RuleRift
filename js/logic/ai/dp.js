@@ -1,33 +1,40 @@
-import { getAllNumberMoves } from '../moves.js';
-import { greedyChoose } from './greedy.js';
-import { deepClone } from '../../utils/helpers.js';
+import { cloneBoard, hashBoard } from '../board.js';
+import { getAllNumberMoves, getAllBlackMoves } from '../moves.js';
 
-const memo = new Map();
+/**
+ * Shallow DP: examine immediate moves and one-step lookahead using memoization.
+ * Returns the best move found.
+ */
+const memo = {};
 
-function hashBoard(board) {
-  return board.map(row => row.map(c => (c.isBlack ? 'B' : (c.value === null ? '.' : c.value))).join('|')).join('/');
-}
+export function dpChoose(board, context = { blackAvailable: true }) {
+  const key = JSON.stringify(board.map(r => r.map(c => ({v:c.value,b:c.isBlack}))));
+  if (memo[key]) return memo[key];
 
-/** shallow lookahead DP: choose move with best immediate + best response using greedy */
-export function dpChoose(board) {
-  const key = hashBoard(board);
-  if (memo.has(key)) return memo.get(key);
-  const moves = getAllNumberMoves(board);
-  if (!moves.length) return null;
+  const numMoves = getAllNumberMoves(board);
+  const blackMoves = context.blackAvailable ? getAllBlackMoves(board) : [];
+
+  // if no moves, return null
+  if (numMoves.length === 0 && blackMoves.length === 0) { memo[key] = null; return null; }
+
+  // evaluate moves heuristically, with 1-step lookahead scoring
   let best = null, bestScore = -Infinity;
-  for (const m of moves) {
-    // simulate
-    const sim = deepClone(board);
-    sim[m.r][m.c].value = m.value;
-    // opponent best reply (greedy)
-    const opp = greedyChoose(sim);
-    let score = 1; // baseline
-    if (!opp) score += 0.5;
-    // small heuristic: prefer moves that don't create many new legal moves for opponent
-    const oppMovesAfter = getAllNumberMoves(sim).length;
-    score -= oppMovesAfter * 0.02;
-    if (score > bestScore) { bestScore = score; best = m; }
+  const scoreMove = (move) => {
+    // baseline
+    let s = (move.type === 'place') ? 5 : 1;
+    // shallow lookahead: simulate and count number of moves remaining (more is better)
+    const b = cloneBoard(board);
+    if (move.type === 'place') b[move.r][move.c].value = move.value;
+    else if (move.type === 'black') b[move.r][move.c].isBlack = true;
+    const nm = getAllNumberMoves(b).length + (context.blackAvailable && move.type!=='black' ? getAllBlackMoves(b).length : 0);
+    s += nm * 0.1;
+    return s;
+  };
+
+  for (const m of [...numMoves, ...blackMoves]) {
+    const s = scoreMove(m);
+    if (s > bestScore) { bestScore = s; best = m; }
   }
-  memo.set(key, best);
+  memo[key] = best;
   return best;
 }

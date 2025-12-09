@@ -1,28 +1,48 @@
-import { getAllNumberMoves } from '../moves.js';
+import { getAllNumberMoves, getAllBlackMoves } from '../moves.js';
 
+/**
+ * Simple greedy: score each number move and black move, choose highest.
+ * Additional heuristics can be added.
+ */
 function scoreNumberMove(board, move) {
-  let score = 0;
-  // prefer center cells a little
   const n = board.length;
+  let s = 0;
+  // baseline: prefer moves that fill a cell
+  s += 5;
+  // prefer moves near center
   const center = (n-1)/2;
-  score -= (Math.abs(move.r-center) + Math.abs(move.c-center)) * 0.1;
-  // encourage moves that satisfy inequalities if neighbor exists and becomes valid
-  const cell = board[move.r][move.c];
-  if (cell.inequalities.left || cell.inequalities.right || cell.inequalities.up || cell.inequalities.down) score += 0.7;
-  // prefer moves that reduce number of empty cells (progress)
-  score += 0.2;
-  // slight bias to smaller numbers to keep options open
-  score += (n - move.value) * 0.01;
-  return score;
+  s += (n - (Math.abs(move.r - center) + Math.abs(move.c - center))) * 0.3;
+  // prefer numbers that satisfy some inequalities (small bonus)
+  // (We cannot inspect inequality satisfaction easily here without simulating; keep simple)
+  // slight tie-breaker prefer smaller numbers
+  s += (n - move.value) * 0.05;
+  return s;
 }
 
-export function greedyChoose(board) {
-  const moves = getAllNumberMoves(board);
-  if (!moves.length) return null;
-  let best = null, bs = -Infinity;
-  for (const m of moves) {
+function scoreBlackMove(board, move) {
+  let s = 0;
+  // treat black as lower priority; prefer edges
+  const n = board.length;
+  if (move.r === 0 || move.r === n-1 || move.c === 0 || move.c === n-1) s += 1.5;
+  s += 0.5;
+  return s;
+}
+
+export function greedyChoose(board, context = { blackAvailable: true, gridSize: 5 }) {
+  const numberMoves = getAllNumberMoves(board);
+  const blackMoves = context.blackAvailable ? getAllBlackMoves(board) : [];
+
+  let best = null;
+  let bestScore = -Infinity;
+
+  for (const m of numberMoves) {
     const s = scoreNumberMove(board, m);
-    if (s > bs) { bs = s; best = m; }
+    if (s > bestScore) { bestScore = s; best = m; }
+  }
+  for (const m of blackMoves) {
+    const s = scoreBlackMove(board, m);
+    // only choose black if score close to best number move (gives bot possible strategic block)
+    if (s + 0.2 > bestScore) { bestScore = s; best = m; }
   }
   return best;
 }

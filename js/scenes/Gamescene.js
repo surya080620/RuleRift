@@ -1,235 +1,210 @@
-import { createBoard, cloneBoard } from '../logic/board.js';
-import { canPlaceNumber, isBoardValid, whitesRemainConnected } from '../logic/rules.js';
-import { getAllNumberMoves } from '../logic/moves.js';
+import { createBoard, cloneBoard, hashBoard } from '../logic/board.js';
+import { canPlaceNumber, canPlaceBlack, whitesRemainConnected, isBoardComplete } from '../logic/rules.js';
+import { getAllNumberMoves, getAllBlackMoves } from '../logic/moves.js';
 import { greedyChoose } from '../logic/ai/greedy.js';
-import { dcChoose } from '../logic/ai/dc.js';
-import { dpChoose } from '../logic/ai/dp.js';
-import { animatePlaceNumber, animateInvalid, animatePlaceBlack } from '../utils/animations.js';
-import { deepClone } from '../utils/helpers.js';
+import * as anim from '../utils/animations.js';
 
 export default class GameScene extends Phaser.Scene {
-  constructor() { super({ key: 'GameScene' }); }
-  init(data) {
+  constructor(){ super({ key: 'GameScene' }); }
+
+  init(data){
     this.gridSize = data.gridSize || 5;
-    this.cellSize = Math.floor(560 / this.gridSize);
+    this.vsAI = (data.vsAI !== undefined) ? data.vsAI : true;
+    this.cellSize = Math.floor(600 / this.gridSize);
     this.left = 80;
-    this.top = 120;
-    this.selected = null;
-    this.turn = 'Player'; // Player vs Computer (Computer acts as Player 2)
-    this.aiMode = 'greedy';
-    this.aiThinking = false;
+    this.top = 100;
+    this.currentPlayer = 'human'; // 'human' or 'bot'
+    this.playerBlackAvailable = true;
+    this.botBlackAvailable = true;
   }
 
-  preload() {
-    // no external images required
-  }
+  preload(){ /* no external assets needed */ }
 
-  create() {
-    // create board and default sample state (some black tiles + inequalities)
+  create(){
+    // board state
     this.board = createBoard(this.gridSize);
-    // sample pre-set black tiles (these are fixed per original rules)
-    if (this.gridSize >= 5) {
-      this.board[1][2].isBlack = true;
-      this.board[3][1].isBlack = true;
-    }
-    // sample inequalities: store as arrows relative to cell: left/right/up/down with '<' or '>'
-    // Example: cell (0,1) has left '<' meaning left < this cell -> board[0][1].inequalities.left = '<'
-    this.board[0][1].inequalities.left = '<';
-    this.board[2][3].inequalities.up = '>';
-    // draw grid UI
+    // Example: add some preset black tiles and inequalities (editable)
+    // Pre-set black positions (can be used to craft puzzles); these are fixed
+    this.board[1][2].isBlack = true;
+    // Add some sample inequalities: cell.inequalities.right = '<' means this cell < right neighbor
+    this.board[0][0].inequalities.right = '<';
+    this.board[0][0].inequalities.down = '<';
+    this.board[2][3].inequalities.left = '>';
+    // draw background
+    this.add.rectangle(this.cameras.main.centerX, this.cameras.main.centerY, 640, 640, 0x0f1220).setStrokeStyle(2, 0x2b2b3a);
+    // draw grid visuals
     this.tileSprites = [];
-    this.graphics = this.add.graphics();
-    this.drawGrid();
-    // input handling
-    this.input.on('pointerdown', (pointer) => {
-      if (this.aiThinking) return;
-      const pos = this.screenToCell(pointer.x, pointer.y);
-      if (!pos) return;
-      const { r, c } = pos;
-      // right click toggle pencil mark (right mouse button)
-      if (pointer.rightButtonDown()) {
-        this.togglePencil(r, c);
-        return;
-      }
-      // if tile is black -> reject
-      if (this.board[r][c].isBlack) {
-        animateInvalid(this, r, c, this.left, this.top, this.cellSize);
-        this.scene.get('UIScene').setStatus('Cannot play on black tile.');
-        return;
-      }
-      // select tile
-      this.selected = { r, c };
-      this.refreshVisuals();
-    });
-    // keyboard input for numbers 1..N and backspace to clear
-    this.input.keyboard.on('keydown', (ev) => {
-      if (!this.selected || this.aiThinking) return;
-      const key = ev.key;
-      const N = this.gridSize;
-      if (key === 'Backspace' || key === '0') {
-        this.setTileValue(this.selected.r, this.selected.c, null);
-        return;
-      }
-      const v = parseInt(key);
-      if (!isNaN(v) && v >= 1 && v <= N) {
-        this.playerPlaceNumber(this.selected.r, this.selected.c, v);
-      }
-    });
-
-    // show hints and initial visuals
-    this.refreshVisuals();
-    // update UIScene
-    this.scene.get('UIScene').updateTurn(this.turn);
-  }
-
-  setAIMode(mode) { this.aiMode = mode; }
-
-  drawGrid() {
-    // create children for each tile: bg rect and text
-    for (let r = 0; r < this.gridSize; r++) {
+    for (let r=0;r<this.gridSize;r++){
       this.tileSprites[r] = [];
-      for (let c = 0; c < this.gridSize; c++) {
+      for (let c=0;c<this.gridSize;c++){
         const x = this.left + c * this.cellSize + this.cellSize/2;
         const y = this.top + r * this.cellSize + this.cellSize/2;
-        const bg = this.add.rectangle(x, y, this.cellSize - 6, this.cellSize - 6, 0x2b2b3a)
-          .setStrokeStyle(2, 0x444455);
-        const txt = this.add.text(x, y, '', { fontSize: `${Math.floor(this.cellSize/2.6)}px`, color:'#fff' }).setOrigin(0.5);
-        const pencil = this.add.text(x - this.cellSize/2 + 8, y - this.cellSize/2 + 8, '', { fontSize:'12px', color:'#ddd' } ).setOrigin(0);
-        this.tileSprites[r][c] = { bg, txt, pencil, x, y };
+        const bg = this.add.rectangle(x, y, this.cellSize - 6, this.cellSize - 6, 0x22323a).setStrokeStyle(2, 0x2b3a44);
+        const txt = this.add.text(x, y, '', { fontSize: `${Math.floor(this.cellSize/2.4)}px`, color: '#fff' }).setOrigin(0.5);
+        bg.setInteractive();
+        bg.on('pointerdown', (p) => this.onTileClick(r,c,p));
+        // right-click to use black tile
+        bg.on('pointerup', (pointer) => {
+          if (pointer.rightButtonDown()) this.onRightClick(r,c);
+        });
+        this.tileSprites[r][c] = { bg, txt };
       }
     }
-  }
 
-  screenToCell(px, py) {
-    const lx = px - this.left;
-    const ty = py - this.top;
-    if (lx < 0 || ty < 0) return null;
-    const c = Math.floor(lx / this.cellSize), r = Math.floor(ty / this.cellSize);
-    if (r < 0 || r >= this.gridSize || c < 0 || c >= this.gridSize) return null;
-    return { r, c };
-  }
-
-  togglePencil(r, c) {
-    const cell = this.board[r][c];
-    if (cell.isBlack) return;
-    cell.pencil = !cell.pencil;
-    this.refreshVisuals();
-  }
-
-  setTileValue(r, c, value) {
-    this.board[r][c].value = value;
-    this.refreshVisuals();
-  }
-
-  playerPlaceNumber(r, c, value) {
-    // validate via rules.js
-    if (!canPlaceNumber(this.board, r, c, value)) {
-      animateInvalid(this, r, c, this.left, this.top, this.cellSize);
-      this.scene.get('UIScene').setStatus('Invalid move.');
-      return;
-    }
-    // place number
-    this.board[r][c].value = value;
-    animatePlaceNumber(this, r, c, value, this.left, this.top, this.cellSize);
-    this.refreshVisuals();
-    // check win
-    if (isBoardValid(this.board) && this.isBoardComplete()) {
-      this.scene.get('UIScene').setStatus('You win!');
-      return;
-    }
-    // pass to AI
-    this.time.delayedCall(300, () => this.aiTurn());
-  }
-
-  aiMove() { // manual AI trigger
-    if (this.aiThinking) return;
-    this.time.delayedCall(50, ()=> this.aiTurn());
-  }
-
-  aiTurn() {
-    this.aiThinking = true;
-    this.scene.get('UIScene').setStatus('AI thinking...');
-    const boardCopy = deepClone(this.board);
-    let move = null;
-    if (this.aiMode === 'greedy') move = greedyChoose(boardCopy);
-    else if (this.aiMode === 'dc') move = dcChoose(boardCopy);
-    else move = dpChoose(boardCopy);
-    if (!move) {
-      this.scene.get('UIScene').setStatus('AI has no move. You win?');
-      this.aiThinking = false;
-      return;
-    }
-    // apply move
-    if (move.type === 'place') {
-      // verify again on real board
-      if (canPlaceNumber(this.board, move.r, move.c, move.value)) {
-        this.board[move.r][move.c].value = move.value;
-        animatePlaceNumber(this, move.r, move.c, move.value, this.left, this.top, this.cellSize);
-      }
-    } else if (move.type === 'black') {
-      // pre-set black tiles are fixed; AI won't place blacks in this original variant
-    }
-    this.time.delayedCall(250, () => {
-      this.refreshVisuals();
-      this.aiThinking = false;
-      if (isBoardValid(this.board) && this.isBoardComplete()) {
-        this.scene.get('UIScene').setStatus('AI completed board!');
+    // pointer keyboard
+    this.selected = null;
+    this.input.keyboard.on('keydown', (evt) => {
+      if (!this.selected) return;
+      const key = evt.key;
+      const n = parseInt(key);
+      if (!isNaN(n) && n >= 1 && n <= this.gridSize) {
+        this.tryPlaceNumber(this.selected.r, this.selected.c, n);
+      } else if (key === 'Backspace' || key === 'Delete') {
+        this.tryRemoveNumber(this.selected.r, this.selected.c);
       }
     });
+
+    // simple instructions
+    this.add.text(14, 700, 'Left-click tile to select. Press number (1..N) to place. Right-click to place your black (1 use).', { fontSize:'14px', color:'#ddd' });
+
+    this.refreshVisuals();
   }
 
-  isBoardComplete() {
-    for (let r=0;r<this.gridSize;r++) for (let c=0;c<this.gridSize;c++) {
-      if (!this.board[r][c].isBlack && this.board[r][c].value === null) return false;
-    }
-    return true;
+  onTileClick(r,c,pointer){
+    // selecting tile
+    this.selected = { r, c };
+    // highlight briefly
+    const spr = this.tileSprites[r][c];
+    spr.bg.setStrokeStyle(3, 0xffff88);
+    this.time.delayedCall(220, ()=> spr.bg.setStrokeStyle(2, 0x2b3a44));
   }
 
-  refreshVisuals() {
-    // update each tile visual from this.board
-    for (let r=0;r<this.gridSize;r++) {
-      for (let c=0;c<this.gridSize;c++) {
+  onRightClick(r,c){
+    // Try to place player's black tile (human) if it's human's turn
+    if (this.currentPlayer !== 'human') return;
+    if (!this.playerBlackAvailable) { anim.flashInvalid(this); return; }
+    if (this.board[r][c].isBlack) { anim.flashInvalid(this); return; }
+    // make sure tile is empty (we disallow blacking a tile that already has number)
+    if (this.board[r][c].value !== null) { anim.flashInvalid(this); return; }
+    // ask rules if can place
+    if (!canPlaceBlack(this.board, r, c)) { anim.flashInvalid(this); return; }
+    // place black
+    this.board[r][c].isBlack = true;
+    this.playerBlackAvailable = false;
+    anim.placeBlack(this, r, c, this.left, this.top, this.cellSize);
+    this.refreshVisuals();
+    // after valid action, switch turn
+    this.endTurn();
+  }
+
+  tryPlaceNumber(r,c,v){
+    if (this.board[r][c].isBlack) { anim.flashInvalid(this); return; }
+    if (this.board[r][c].value === v) { /* unchanged */ return; }
+    if (!canPlaceNumber(this.board, r, c, v)) { anim.flashInvalid(this); return; }
+    // place
+    this.board[r][c].value = v;
+    anim.placeNumber(this, r, c, v, this.left, this.top, this.cellSize);
+    this.refreshVisuals();
+    this.endTurn();
+  }
+
+  tryRemoveNumber(r,c){
+    if (this.board[r][c].isBlack) { anim.flashInvalid(this); return; }
+    if (this.board[r][c].value === null) return;
+    // allow undo removal (only human)
+    if (this.currentPlayer !== 'human') return;
+    this.board[r][c].value = null;
+    this.refreshVisuals();
+  }
+
+  endTurn(){
+    // Check end condition after move
+    const end = this.checkGameEnd();
+    if (end.ended) {
+      this.showEnd(end.reason);
+      return;
+    }
+    // switch player
+    if (this.vsAI) {
+      this.currentPlayer = (this.currentPlayer === 'human') ? 'bot' : 'human';
+      if (this.currentPlayer === 'bot') {
+        this.time.delayedCall(420, ()=> this.aiTurn());
+      }
+    } else {
+      // two human players
+      this.currentPlayer = (this.currentPlayer === 'human') ? 'other' : 'human';
+    }
+  }
+
+  aiTurn(){
+    // Bot uses greedy choose and may use its black tile
+    const move = greedyChoose(this.board, { blackAvailable: this.botBlackAvailable, gridSize: this.gridSize });
+    if (!move) {
+      // no legal moves
+      const end = this.checkGameEnd();
+      this.showEnd(end.reason || 'No legal moves — Game over');
+      return;
+    }
+    if (move.type === 'place') {
+      this.board[move.r][move.c].value = move.value;
+      anim.placeNumber(this, move.r, move.c, move.value, this.left, this.top, this.cellSize);
+    } else if (move.type === 'black') {
+      this.board[move.r][move.c].isBlack = true;
+      this.botBlackAvailable = false;
+      anim.placeBlack(this, move.r, move.c, this.left, this.top, this.cellSize);
+    }
+    this.refreshVisuals();
+    this.endTurn();
+  }
+
+  refreshVisuals(){
+    for (let r=0;r<this.gridSize;r++){
+      for (let c=0;c<this.gridSize;c++){
         const cell = this.board[r][c];
         const spr = this.tileSprites[r][c];
-        // background color
-        if (cell.isBlack) spr.bg.setFillStyle(0x0a0a0a);
-        else if (this.selected && this.selected.r === r && this.selected.c === c) spr.bg.setFillStyle(0x3b5f8a);
-        else spr.bg.setFillStyle(0x2b2b3a);
-        // text
-        spr.txt.setText(cell.value === null ? '' : String(cell.value));
-        // pencil
-        spr.pencil.setText(cell.pencil ? '•' : '');
-        // arrows (inequalities) - draw small glyphs using graphics
-      }
-    }
-    // draw inequalities arrows overlay
-    this.graphics.clear();
-    for (let r=0;r<this.gridSize;r++) {
-      for (let c=0;c<this.gridSize;c++) {
-        const cell = this.board[r][c];
-        const spr = this.tileSprites[r][c];
-        const x = spr.x, y = spr.y;
-        this.graphics.lineStyle(2, 0x9999ff, 1);
-        // check left arrow
-        if (cell.inequalities.left) {
-          const t = cell.inequalities.left === '<' ? '<' : '>';
-          this.add.text(x - this.cellSize/2 + 6, y, t, { fontSize:'18px', color:'#aaf' }).setDepth(50).setOrigin(0.5).setAlpha(0.9).setScrollFactor(0);
-        }
-        if (cell.inequalities.right) {
-          const t = cell.inequalities.right === '<' ? '<' : '>';
-          this.add.text(x + this.cellSize/2 - 6, y, t, { fontSize:'18px', color:'#aaf' }).setDepth(50).setOrigin(0.5).setAlpha(0.9).setScrollFactor(0);
-        }
-        if (cell.inequalities.up) {
-          const t = cell.inequalities.up === '<' ? '<' : '>';
-          this.add.text(x, y - this.cellSize/2 + 6, t, { fontSize:'18px', color:'#aaf' }).setDepth(50).setOrigin(0.5).setAlpha(0.9).setScrollFactor(0);
-        }
-        if (cell.inequalities.down) {
-          const t = cell.inequalities.down === '<' ? '<' : '>';
-          this.add.text(x, y + this.cellSize/2 - 6, t, { fontSize:'18px', color:'#aaf' }).setDepth(50).setOrigin(0.5).setAlpha(0.9).setScrollFactor(0);
+        if (cell.isBlack) {
+          spr.bg.setFillStyle(0x0b0b0d);
+          spr.txt.setText('');
+        } else {
+          spr.bg.setFillStyle(0x22323a);
+          spr.txt.setText(cell.value === null ? (cell.inequalities.right || cell.inequalities.down || '') : String(cell.value));
+          // show inequality markers small above/beside if present
+          let mark = '';
+          if (cell.value === null) {
+            if (cell.inequalities.right) mark = cell.inequalities.right;
+            if (cell.inequalities.down) mark = mark || cell.inequalities.down;
+          }
         }
       }
     }
-    // update UI turn
-    this.scene.get('UIScene').updateTurn(this.turn);
+  }
+
+  checkGameEnd(){
+    // 1) board full and valid => win
+    if (isBoardComplete(this.board)) return { ended: true, reason: 'Board complete — You win!' };
+    // 2) no legal moves for current player
+    const numberMoves = getAllNumberMoves(this.board);
+    const blackMoves = getAllBlackMoves(this.board);
+    const humanCan = (this.currentPlayer==='human');
+    const playerBlack = humanCan ? this.playerBlackAvailable : this.botBlackAvailable;
+    const hasBlackLegal = blackMoves.length > 0 && playerBlack;
+    if (numberMoves.length === 0 && !hasBlackLegal) {
+      return { ended: true, reason: 'No legal moves left' };
+    }
+    return { ended: false };
+  }
+
+  showEnd(reason){
+    // show an overlay text and stop input
+    const w = this.cameras.main.width, h = this.cameras.main.height;
+    const rect = this.add.rectangle(w/2, h/2, 420, 160, 0x000000, 0.85).setDepth(40);
+    const txt = this.add.text(w/2, h/2 - 6, reason, { fontSize:'20px', color:'#fff' }).setOrigin(0.5).setDepth(41);
+    const btn = this.add.text(w/2, h/2 + 36, 'Restart', { fontSize:'16px', backgroundColor:'#2f8ed9', padding:8, color:'#fff' }).setOrigin(0.5).setInteractive().setDepth(41);
+    btn.on('pointerdown', ()=> { this.scene.restart(); });
+    this.input.enabled = false;
+  }
+
+  restartGame(){
+    this.scene.restart();
   }
 }

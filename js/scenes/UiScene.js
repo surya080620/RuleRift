@@ -1,30 +1,20 @@
 export default class UIScene extends Phaser.Scene {
-  constructor() { super({ key: 'UIScene', active: true }); }
-  create() {
-    // top bar using DOM-like text in Phaser
-    this.turnText = this.add.text(12, 12, 'Turn: Player', { fontSize:'16px' });
-    this.statusText = this.add.text(12, 36, '', { fontSize:'14px', color:'#aaf' });
-
-    // Difficulty selector and AI button
-    this.difficulty = 'greedy';
-    const w = this.cameras.main.width;
-    this.aiButton = this.add.text(w-140, 12, 'AI Move', { fontSize:'16px', backgroundColor:'#2f8ed9', padding:6 })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.scene.get('GameScene').aiMove());
-    this.modeText = this.add.text(w-140, 42, 'AI: Greedy', { fontSize:'12px' }).setInteractive({ useHandCursor: true });
-    this.modeText.on('pointerdown', () => {
-      const next = { greedy:'dp', dp:'dc', dc:'greedy' }[this.difficulty];
-      this.difficulty = next;
-      this.modeText.setText('AI: ' + (next === 'greedy' ? 'Greedy' : next === 'dp' ? 'DP' : 'D&C'));
-      this.scene.get('GameScene').setAIMode(next);
+  constructor(){ super({ key: 'UIScene', active: true }); }
+  create(){
+    this.gameScene = null;
+    // simple overlay elements
+    this.turnText = this.add.text(14, 8, 'Turn: ', { fontSize: '18px', color:'#fff' });
+    this.infoText = this.add.text(14, 32, '', { fontSize: '14px', color:'#ccc' });
+    // Restart button
+    const restart = this.add.text(640, 8, 'Restart', { fontSize:'16px', backgroundColor:'#ff6b6b', padding:6, color:'#fff' }).setInteractive();
+    restart.on('pointerdown', ()=> {
+      this.scene.get('GameScene').restartGame();
     });
   }
-
-  updateTurn(player) {
-    this.turnText.setText('Turn: ' + player);
-  }
-  setStatus(msg) {
-    this.statusText.setText(msg);
-    this.time.delayedCall(2000, ()=> this.statusText.setText(''));
+  update(){
+    const gs = this.scene.get('GameScene');
+    if (!gs) return;
+    this.turnText.setText('Turn: ' + (gs.currentPlayer === 'human' ? 'You' : (gs.vsAI ? 'Bot' : 'Player 2')));
+    this.infoText.setText(`Black left: You=${gs.playerBlackAvailable?1:0} Bot=${gs.botBlackAvailable?1:0}`);
   }
 }
