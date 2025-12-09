@@ -1,13 +1,15 @@
-import BootScene from "./scenes/BootScene.js";
+import BootScene from './scenes/BootScene.js';
+import MenuScene from './scenes/MenuScene.js';
+import GameScene from './scenes/GameScene.js';
+import UIScene from './scenes/UIScene.js';
 
 const config = {
-    type: Phaser.AUTO,
-    width: 800,
-    height: 600,
-    backgroundColor: "#1a1a1a",
-    scene: [BootScene]
+  type: Phaser.AUTO,
+  parent: 'game-container',
+  width: 720,
+  height: 760,
+  backgroundColor: 0x0f0f14,
+  scene: [BootScene, MenuScene, GameScene, UIScene]
 };
 
-const game = new Phaser.Game(config);
-print("hello");
-print("hi")
+window.game = new Phaser.Game(config);
