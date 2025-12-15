@@ -1,34 +1,21 @@
-export function animatePlaceNumber(scene, r, c, value, left, top, cellSize) {
-  const x = left + c*cellSize + cellSize/2;
-  const y = top + r*cellSize + cellSize/2;
-  // find text object if exists
-  try {
-    const spr = scene.tileSprites[r][c];
-    spr.txt.setText(String(value));
-    spr.txt.setScale(0.6);
-    scene.tweens.add({
-      targets: spr.txt,
-      scaleX: 1.05, scaleY: 1.05, duration: 180, yoyo: true
-    });
-  } catch(e){}
+export function animatePlaceNumber(scene, r, c, value, left, top, cellSize){
+  const spr = scene.tileSprites[r][c];
+  spr.txt.setText(String(value));
+  spr.txt.setScale(0.3);
+  scene.tweens.add({ targets: spr.txt, scaleX:1, scaleY:1, duration:200, ease:'Back' });
+  scene.tweens.add({ targets: spr.bg, scaleX: 0.98, scaleY:0.98, duration:120, yoyo:true });
 }
 
-export function animateInvalid(scene, r, c, left, top, cellSize) {
-  try {
-    const spr = scene.tileSprites[r][c];
-    scene.tweens.add({
-      targets: spr.bg,
-      scaleX: 0.96, scaleY: 0.96, duration: 100, yoyo: true
-    });
-    scene.cameras.main.shake(100, 0.002);
-  } catch(e){}
+export function animatePlaceBlack(scene, r, c, isBlack, left, top, cellSize){
+  const spr = scene.tileSprites[r][c];
+  if (isBlack){
+    spr.bg.setFillStyle(0x07070a);
+    spr.txt.setText('');
+    const p = scene.add.circle(spr.bg.x, spr.bg.y, 10, 0x111111, 0.9);
+    scene.tweens.add({ targets: p, alpha:0, scale:2, duration:420, onComplete: ()=>p.destroy() });
+  }
 }
 
-export function animatePlaceBlack(scene, r, c, left, top, cellSize) {
-  try {
-    const spr = scene.tileSprites[r][c];
-    spr.bg.setFillStyle(0x0b0b0d);
-    const p = scene.add.circle(spr.x, spr.y, 6, 0x333333, 0.6);
-    scene.tweens.add({ targets:p, scale:2, alpha:0, duration:400, onComplete: ()=> p.destroy()});
-  } catch(e){}
-}
+export function pulseTile(scene, r, c){ const spr = scene.tileSprites[r][c]; scene.tweens.add({ targets: spr.bg, scaleX:1.02, scaleY:1.02, duration:160, yoyo:true }); }
+
+export function flashTile(scene, r, c, color=0xff4444){ const spr = scene.tileSprites[r][c]; const orig = spr.bg.fillColor; spr.bg.setFillStyle(color); scene.time.delayedCall(220, ()=> spr.bg.setFillStyle(orig)); }

@@ -1,33 +1,32 @@
-import { getAllNumberMoves } from '../moves.js';
 import { greedyChoose } from './greedy.js';
+import * as moves from '../moves.js';
 
-/** simple divide & conquer: choose quadrant with most empty cells, then greedy inside */
-export function dcChoose(board) {
+// Divide & Conquer: split board into regions and run greedy inside each region
+export function dcChoose(board, opts = { botHasBlack: false }){
   const n = board.length;
-  const mid = Math.floor(n/2);
-  const quads = [
-    { r0:0, r1:mid-1, c0:0, c1:mid-1 },
-    { r0:0, r1:mid-1, c0:mid, c1:n-1 },
-    { r0:mid, r1:n-1, c0:0, c1:mid-1 },
-    { r0:mid, r1:n-1, c0:mid, c1:n-1 }
+  const midR = Math.floor(n/2);
+  const midC = Math.floor(n/2);
+  const regions = [
+    r => r.row < midR && r.col < midC,
+    r => r.row < midR && r.col >= midC,
+    r => r.row >= midR && r.col < midC,
+    r => r.row >= midR && r.col >= midC
   ];
-  let bestQuad = null, bestEmpty = -1;
-  for (const q of quads) {
-    let empty = 0;
-    for (let r=q.r0;r<=q.r1;r++) for (let c=q.c0;c<=q.c1;c++) {
-      if (!board[r][c].isBlack && board[r][c].value === null) empty++;
-    }
-    if (empty > bestEmpty) { bestEmpty = empty; bestQuad = q; }
+
+  function regionFilterFactory(pred){
+    return (rr, cc) => pred({ row: rr, col: cc });
   }
-  // generate moves in that quad only
-  const moves = [];
-  for (let r=bestQuad.r0;r<=bestQuad.r1;r++) for (let c=bestQuad.c0;c<=bestQuad.c1;c++) {
-    if (!board[r][c].isBlack && board[r][c].value === null) {
-      for (let v=1; v<=board.length; v++) {
-        // we'll use getAllNumberMoves for legality; cheap approach: gather all legal and filter
-      }
-    }
+
+  let bestMove = null; let bestScore = -Infinity;
+  for (const pred of regions){
+    const filter = regionFilterFactory(pred);
+    const candidate = greedyChoose(board, { botHasBlack: opts.botHasBlack, regionFilter: filter });
+    if (!candidate) continue;
+    const centerBias = - (Math.abs((candidate.r - (n-1)/2)) + Math.abs((candidate.c - (n-1)/2))) * 0.01;
+    const score = (candidate.type === 'place' ? 10 : 3) + centerBias;
+    if (score > bestScore){ bestScore = score; bestMove = candidate; }
   }
-  // fallback to greedy on whole board
-  return greedyChoose(board);
+
+  if (!bestMove) return greedyChoose(board, { botHasBlack: opts.botHasBlack });
+  return bestMove;
 }
