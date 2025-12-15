@@ -1,9 +1,14 @@
+// js/logic/ai/dp.js
+// Minimax-like DP search with memoization + alpha-beta pruning.
+// Depth-limited. We also limit branching by sorting moves by a heuristic and keeping top K.
+
 import * as moves from '../moves.js';
 import * as rules from '../rules.js';
+import { cloneBoard } from '../board.js';
 
 const memo = new Map();
 
-function boardHash(board, player, hasBlack){
+function boardHash(board, currentPlayer, botHasBlack, playerHasBlack){
   const parts = [];
   for (let r=0;r<board.length;r++){
     for (let c=0;c<board.length;c++){
@@ -11,11 +16,12 @@ function boardHash(board, player, hasBlack){
       parts.push(cell.isBlack ? 'B' : (cell.value === null ? '.' : String(cell.value)));
     }
   }
-  parts.push('|P'+player+'|B'+(hasBlack?1:0));
+  parts.push(`|P${currentPlayer}|b${botHasBlack?1:0}|p${playerHasBlack?1:0}`);
   return parts.join('');
 }
 
-function evaluateStatic(board){
+function staticEval(board){
+  // heuristic: fewer empty white cells is better for the player to finish; prefer more constraints satisfied
   let empties = 0;
   for (let r=0;r<board.length;r++){
     for (let c=0;c<board.length;c++){
@@ -25,56 +31,77 @@ function evaluateStatic(board){
   return -empties;
 }
 
-function cloneBoardState(board){
-  return board.map(row => row.map(cell => ({ value: cell.value, isBlack: cell.isBlack, inequalities: Object.assign({}, cell.inequalities) })));
+// rank moves by quick heuristic: prefer number placements, fewer resulting possibilities
+function quickRank(board, move){
+  if (move.type === 'place') return 100 + (Math.random()*10);
+  return 20 + Math.random()*5;
 }
 
-export function dpChoose(board, opts = { botHasBlack: false }, depth = 3){
-  const player = 2;
-  const hasBlack = opts.botHasBlack;
+// simulate applying move onto a cloned board
+function applyMove(board, move){
+  const sim = cloneBoard(board);
+  if (move.type === 'place') sim[move.r][move.c].value = move.value;
+  else if (move.type === 'black') sim[move.r][move.c].isBlack = true;
+  return sim;
+}
 
-  function minimax(stateBoard, currentPlayer, botHasBlack, alpha, beta, d){
-    const key = boardHash(stateBoard, currentPlayer, botHasBlack);
+export function dpChoose(board, opts = { botHasBlack:false }, maxDepth = 3){
+  // main minimax with memoization
+  const botPlayer = 2;
+
+  function minimax(stateBoard, currentPlayer, botHasBlack, playerHasBlack, depth, alpha, beta){
+    const key = boardHash(stateBoard, currentPlayer, botHasBlack, playerHasBlack) + '|d' + depth;
     if (memo.has(key)) return memo.get(key);
-    if (d === 0) return { score: evaluateStatic(stateBoard), move: null };
 
-    const legal = moves.getLegalMoves(stateBoard, currentPlayer, { playerHasBlack: currentPlayer===2?botHasBlack:false });
-    if (!legal || legal.length === 0){
-      const sc = evaluateStatic(stateBoard);
-      return { score: sc, move: null };
+    // terminal or depth 0
+    const legal = moves.getLegalMoves(stateBoard, currentPlayer, { playerHasBlack: currentPlayer===1?playerHasBlack:botHasBlack }) || [];
+    if (depth === 0 || !legal || legal.length === 0){
+      const evalScore = staticEval(stateBoard);
+      const res = { score: evalScore, move: null };
+      memo.set(key, res);
+      return res;
     }
 
+    // limit branching: rank and keep top K
+    legal.sort((a,b) => quickRank(stateBoard,b) - quickRank(stateBoard,a));
+    const BRANCH_LIMIT = 28; // tuneable
+    const branchList = legal.slice(0, BRANCH_LIMIT);
+
     let bestMove = null;
-    if (currentPlayer === player){
+
+    if (currentPlayer === botPlayer){
       let value = -Infinity;
-      for (const m of legal){
-        const sim = cloneBoardState(stateBoard);
-        if (m.type === 'place') sim[m.r][m.c].value = m.value;
-        else if (m.type === 'black') sim[m.r][m.c].isBlack = true;
-        const nextHasBlack = (currentPlayer===2 && m.type==='black') ? false : botHasBlack;
-        const res = minimax(sim, 1, nextHasBlack, alpha, beta, d-1);
-        if (res.score > value){ value = res.score; bestMove = m; }
+      for (const m of branchList){
+        const sim = applyMove(stateBoard, m);
+        const nextBotHasBlack = (currentPlayer === 2 && m.type === 'black') ? false : botHasBlack;
+        const nextPlayerHasBlack = (currentPlayer === 1 && m.type === 'black') ? false : playerHasBlack;
+        const child = minimax(sim, currentPlayer === 1 ? 2 : 1, nextBotHasBlack, nextPlayerHasBlack, depth-1, alpha, beta);
+        if (child.score > value){ value = child.score; bestMove = m; }
         alpha = Math.max(alpha, value);
         if (alpha >= beta) break;
       }
-      memo.set(key, { score: value, move: bestMove });
-      return { score: value, move: bestMove };
+      const res = { score: value, move: bestMove };
+      memo.set(key, res);
+      return res;
     } else {
+      // opponent: minimize
       let value = Infinity;
-      for (const m of legal){
-        const sim = cloneBoardState(stateBoard);
-        if (m.type === 'place') sim[m.r][m.c].value = m.value;
-        else if (m.type === 'black') sim[m.r][m.c].isBlack = true;
-        const res = minimax(sim, 2, botHasBlack, alpha, beta, d-1);
-        if (res.score < value){ value = res.score; bestMove = m; }
+      for (const m of branchList){
+        const sim = applyMove(stateBoard, m);
+        const nextBotHasBlack = (currentPlayer === 2 && m.type === 'black') ? false : botHasBlack;
+        const nextPlayerHasBlack = (currentPlayer === 1 && m.type === 'black') ? false : playerHasBlack;
+        const child = minimax(sim, currentPlayer === 1 ? 2 : 1, nextBotHasBlack, nextPlayerHasBlack, depth-1, alpha, beta);
+        if (child.score < value){ value = child.score; bestMove = m; }
         beta = Math.min(beta, value);
         if (alpha >= beta) break;
       }
-      memo.set(key, { score: value, move: bestMove });
-      return { score: value, move: bestMove };
+      const res = { score: value, move: bestMove };
+      memo.set(key, res);
+      return res;
     }
   }
 
-  const root = minimax(board, 2, hasBlack, -Infinity, Infinity, depth);
+  // root call: currentPlayer = bot (2)
+  const root = minimax(board, 2, opts.botHasBlack, opts.playerHasBlack || false, maxDepth, -Infinity, Infinity);
   return root.move;
 }

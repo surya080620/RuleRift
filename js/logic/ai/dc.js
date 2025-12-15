@@ -1,32 +1,45 @@
+// js/logic/ai/dc.js
+// Divide & Conquer: split board into regions and run greedy inside each region.
+// This implementation examines quadrants and prefers the best local greedy choice.
+
 import { greedyChoose } from './greedy.js';
 import * as moves from '../moves.js';
 
-// Divide & Conquer: split board into regions and run greedy inside each region
-export function dcChoose(board, opts = { botHasBlack: false }){
-  const n = board.length;
+function regionPredFactory(n, quadrantIndex){
   const midR = Math.floor(n/2);
   const midC = Math.floor(n/2);
-  const regions = [
-    r => r.row < midR && r.col < midC,
-    r => r.row < midR && r.col >= midC,
-    r => r.row >= midR && r.col < midC,
-    r => r.row >= midR && r.col >= midC
-  ];
+  switch(quadrantIndex){
+    case 0: return (r,c) => r < midR && c < midC; // top-left
+    case 1: return (r,c) => r < midR && c >= midC; // top-right
+    case 2: return (r,c) => r >= midR && c < midC; // bottom-left
+    case 3: default: return (r,c) => r >= midR && c >= midC; // bottom-right
+  }
+}
 
-  function regionFilterFactory(pred){
-    return (rr, cc) => pred({ row: rr, col: cc });
+export function dcChoose(board, opts = { botHasBlack:false }){
+  const n = board.length;
+  const regionCandidates = [];
+  let anyCandidate = false;
+
+  // For each quadrant, ask greedy to choose restricted to that region
+  for (let qi = 0; qi < 4; qi++){
+    const pred = regionPredFactory(n, qi);
+    const candidate = greedyChoose(board, { botHasBlack: opts.botHasBlack, regionFilter: pred });
+    if (candidate) {
+      anyCandidate = true;
+      // rate candidate: prefer placing numbers, prefer central positions lightly
+      const centerBias = - (Math.abs(candidate.r - (n-1)/2) + Math.abs(candidate.c - (n-1)/2)) * 0.02;
+      const score = (candidate.type === 'place' ? 10 : 3) + centerBias;
+      regionCandidates.push({ move: candidate, score });
+    }
   }
 
-  let bestMove = null; let bestScore = -Infinity;
-  for (const pred of regions){
-    const filter = regionFilterFactory(pred);
-    const candidate = greedyChoose(board, { botHasBlack: opts.botHasBlack, regionFilter: filter });
-    if (!candidate) continue;
-    const centerBias = - (Math.abs((candidate.r - (n-1)/2)) + Math.abs((candidate.c - (n-1)/2))) * 0.01;
-    const score = (candidate.type === 'place' ? 10 : 3) + centerBias;
-    if (score > bestScore){ bestScore = score; bestMove = candidate; }
+  if (regionCandidates.length > 0) {
+    regionCandidates.sort((a,b) => b.score - a.score);
+    return regionCandidates[0].move;
   }
 
-  if (!bestMove) return greedyChoose(board, { botHasBlack: opts.botHasBlack });
-  return bestMove;
+  // fallback: if no regional candidate found, try global moves (greedy)
+  const fallback = greedyChoose(board, { botHasBlack: opts.botHasBlack });
+  return fallback;
 }
