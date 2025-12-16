@@ -1,40 +1,48 @@
-import * as moves from '../moves.js';
-import * as rules from '../rules.js';
+import { getAllNumberMoves, getAllBlackMoves } from '../moves.js';
 
-// Greedy: evaluate moves by immediate board improvement
-function evaluateBoardAfterMove(board, move) {
+/**
+ * Simple greedy: score each number move and black move, choose highest.
+ * Additional heuristics can be added.
+ */
+function scoreNumberMove(board, move) {
   const n = board.length;
-  const sim = board.map(row => row.map(cell => ({ value: cell.value, isBlack: cell.isBlack, inequalities: Object.assign({}, cell.inequalities) })));
-
-  if (move.type === 'place') sim[move.r][move.c].value = move.value;
-  else if (move.type === 'black') sim[move.r][move.c].isBlack = true;
-
-  let totalPoss = 0;
-  for (let r=0;r<n;r++){
-    for (let c=0;c<n;c++){
-      if (sim[r][c].isBlack || sim[r][c].value !== null) continue;
-      const vals = rules.getValidNumbers(sim, r, c);
-      totalPoss += vals.length;
-    }
-  }
-  let placeBonus = move.type === 'place' ? 8 : 0;
-  let blackBonus = move.type === 'black' ? 3 : 0;
-
-  return -totalPoss + placeBonus + blackBonus;
+  let s = 0;
+  // baseline: prefer moves that fill a cell
+  s += 5;
+  // prefer moves near center
+  const center = (n-1)/2;
+  s += (n - (Math.abs(move.r - center) + Math.abs(move.c - center))) * 0.3;
+  // prefer numbers that satisfy some inequalities (small bonus)
+  // (We cannot inspect inequality satisfaction easily here without simulating; keep simple)
+  // slight tie-breaker prefer smaller numbers
+  s += (n - move.value) * 0.05;
+  return s;
 }
 
-export function greedyChoose(board, opts = { botHasBlack: false, playerHasBlack: false, regionFilter: null }){
-  let candidates = moves.getLegalMoves(board, 2, { playerHasBlack: opts.botHasBlack });
-  if (opts.regionFilter){
-    candidates = candidates.filter(m => opts.regionFilter(m.r, m.c));
-  }
-  if (!candidates || candidates.length === 0) return null;
+function scoreBlackMove(board, move) {
+  let s = 0;
+  // treat black as lower priority; prefer edges
+  const n = board.length;
+  if (move.r === 0 || move.r === n-1 || move.c === 0 || move.c === n-1) s += 1.5;
+  s += 0.5;
+  return s;
+}
 
-  let best = null, bestScore = -Infinity;
-  for (const m of candidates){
-    const s = evaluateBoardAfterMove(board, m);
-    const final = s + (Math.random()*0.01);
-    if (final > bestScore){ bestScore = final; best = m; }
+export function greedyChoose(board, context = { blackAvailable: true, gridSize: 5 }) {
+  const numberMoves = getAllNumberMoves(board);
+  const blackMoves = context.blackAvailable ? getAllBlackMoves(board) : [];
+
+  let best = null;
+  let bestScore = -Infinity;
+
+  for (const m of numberMoves) {
+    const s = scoreNumberMove(board, m);
+    if (s > bestScore) { bestScore = s; best = m; }
+  }
+  for (const m of blackMoves) {
+    const s = scoreBlackMove(board, m);
+    // only choose black if score close to best number move (gives bot possible strategic block)
+    if (s + 0.2 > bestScore) { bestScore = s; best = m; }
   }
   return best;
 }

@@ -1,45 +1,41 @@
-// js/logic/ai/dc.js
-// Divide & Conquer: split board into regions and run greedy inside each region.
-// This implementation examines quadrants and prefers the best local greedy choice.
-
 import { greedyChoose } from './greedy.js';
-import * as moves from '../moves.js';
 
-function regionPredFactory(n, quadrantIndex){
-  const midR = Math.floor(n/2);
-  const midC = Math.floor(n/2);
-  switch(quadrantIndex){
-    case 0: return (r,c) => r < midR && c < midC; // top-left
-    case 1: return (r,c) => r < midR && c >= midC; // top-right
-    case 2: return (r,c) => r >= midR && c < midC; // bottom-left
-    case 3: default: return (r,c) => r >= midR && c >= midC; // bottom-right
-  }
-}
-
-export function dcChoose(board, opts = { botHasBlack:false }){
+/**
+ * Divide & Conquer wrapper: choose a quadrant with most empty cells,
+ * then run greedy inside that quadrant (filter moves).
+ */
+export async function dcChoose(board, context = {}) {
   const n = board.length;
-  const regionCandidates = [];
-  let anyCandidate = false;
-
-  // For each quadrant, ask greedy to choose restricted to that region
-  for (let qi = 0; qi < 4; qi++){
-    const pred = regionPredFactory(n, qi);
-    const candidate = greedyChoose(board, { botHasBlack: opts.botHasBlack, regionFilter: pred });
-    if (candidate) {
-      anyCandidate = true;
-      // rate candidate: prefer placing numbers, prefer central positions lightly
-      const centerBias = - (Math.abs(candidate.r - (n-1)/2) + Math.abs(candidate.c - (n-1)/2)) * 0.02;
-      const score = (candidate.type === 'place' ? 10 : 3) + centerBias;
-      regionCandidates.push({ move: candidate, score });
+  const regions = [
+    { r0:0, r1: Math.floor(n/2)-1, c0:0, c1: Math.floor(n/2)-1 },
+    { r0:0, r1: Math.floor(n/2)-1, c0:Math.floor(n/2), c1: n-1 },
+    { r0:Math.floor(n/2), r1:n-1, c0:0, c1:Math.floor(n/2)-1 },
+    { r0:Math.floor(n/2), r1:n-1, c0:Math.floor(n/2), c1:n-1 }
+  ];
+  // pick region with most empty (non-black, null) cells
+  let bestReg = regions[0], bestCount = -1;
+  for (const reg of regions) {
+    let count = 0;
+    for (let r=reg.r0;r<=reg.r1;r++) for (let c=reg.c0;c<=reg.c1;c++){
+      if (!board[r][c].isBlack && board[r][c].value === null) count++;
+    }
+    if (count > bestCount) { bestCount = count; bestReg = reg; }
+  }
+  // Now call greedy but prefer moves in that region by providing context (greedy chooses globally)
+  // Simpler: ask greedy; if its move in region, use it; else call greedy filtered for region
+  const global = greedyChoose(board, context);
+  if (!global) return null;
+  if (global.r >= bestReg.r0 && global.r <= bestReg.r1 && global.c >= bestReg.c0 && global.c <= bestReg.c1) return global;
+  // otherwise try to pick a greedy move inside region; fallback to global
+  // naive attempt: iterate all moves and pick best inside region
+  const { getAllNumberMoves, getAllBlackMoves } = await import('../moves.js');
+  const numMoves = getAllNumberMoves(board);
+  let best = null, bestScore=-Infinity;
+  for (const m of numMoves) {
+    if (m.r>=bestReg.r0 && m.r<=bestReg.r1 && m.c>=bestReg.c0 && m.c<=bestReg.c1) {
+      const s = 5; // simple positive weighting
+      if (s > bestScore) { bestScore = s; best = m; }
     }
   }
-
-  if (regionCandidates.length > 0) {
-    regionCandidates.sort((a,b) => b.score - a.score);
-    return regionCandidates[0].move;
-  }
-
-  // fallback: if no regional candidate found, try global moves (greedy)
-  const fallback = greedyChoose(board, { botHasBlack: opts.botHasBlack });
-  return fallback;
+  return best || global;
 }
