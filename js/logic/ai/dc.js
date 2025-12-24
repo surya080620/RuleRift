@@ -1,45 +1,84 @@
 // js/logic/ai/dc.js
-// Divide & Conquer: split board into regions and run greedy inside each region.
-// This implementation examines quadrants and prefers the best local greedy choice.
+// Divide & Conquer Strategy:
+// Splits the board into quadrants and identifies the best local "greedy" move in each.
+// This prevents the AI from having "tunnel vision" (bias toward top-left) and
+// encourages play across the entire board surface.
 
 import { greedyChoose } from './greedy.js';
-import * as moves from '../moves.js';
 
-function regionPredFactory(n, quadrantIndex){
-  const midR = Math.floor(n/2);
-  const midC = Math.floor(n/2);
-  switch(quadrantIndex){
-    case 0: return (r,c) => r < midR && c < midC; // top-left
-    case 1: return (r,c) => r < midR && c >= midC; // top-right
-    case 2: return (r,c) => r >= midR && c < midC; // bottom-left
-    case 3: default: return (r,c) => r >= midR && c >= midC; // bottom-right
-  }
+/**
+ * Creates a filter function for a specific quadrant of the board.
+ * @param {number} n - The board size (e.g., 5)
+ * @param {number} qIndex - Quadrant index (0: TL, 1: TR, 2: BL, 3: BR)
+ * @returns {function(number, number): boolean} A filter function returning true if (r, c) is in the quadrant.
+ */
+function createQuadrantFilter(n, qIndex) {
+  const mid = Math.floor(n / 2);
+
+  // Bitwise check: If qIndex is 2 or 3 (binary 10, 11), it's the bottom half.
+  const rMin = (qIndex & 2) ? mid : 0;
+  const rMax = (qIndex & 2) ? n : mid;
+
+  // Bitwise check: If qIndex is 1 or 3 (binary 01, 11), it's the right half.
+  const cMin = (qIndex & 1) ? mid : 0;
+  const cMax = (qIndex & 1) ? n : mid;
+
+  return (r, c) => r >= rMin && r < rMax && c >= cMin && c < cMax;
 }
 
-export function dcChoose(board, opts = { botHasBlack:false }){
+/**
+ * Chooses a move using a Divide & Conquer approach.
+ * @param {Array<Array<object>>} board - The game board state.
+ * @param {object} opts - Options, including { botHasBlack: boolean }.
+ * @param {number} [depth=1] - (Reserved for future recursive depth).
+ * @returns {object|null} The chosen move {type, r, c, value} or null if none found.
+ */
+export function dcChoose(board, opts = { botHasBlack: false }) {
   const n = board.length;
-  const regionCandidates = [];
-  let anyCandidate = false;
 
-  // For each quadrant, ask greedy to choose restricted to that region
-  for (let qi = 0; qi < 4; qi++){
-    const pred = regionPredFactory(n, qi);
-    const candidate = greedyChoose(board, { botHasBlack: opts.botHasBlack, regionFilter: pred });
-    if (candidate) {
-      anyCandidate = true;
-      // rate candidate: prefer placing numbers, prefer central positions lightly
-      const centerBias = - (Math.abs(candidate.r - (n-1)/2) + Math.abs(candidate.c - (n-1)/2)) * 0.02;
-      const score = (candidate.type === 'place' ? 10 : 3) + centerBias;
-      regionCandidates.push({ move: candidate, score });
+  // Optimization: For very small boards (e.g., 3x3), partitioning is overhead.
+  // Just run global greedy immediately.
+  if (n < 4) {
+    return greedyChoose(board, opts);
+  }
+
+  const regionCandidates = [];
+
+  // Iterate through 4 quadrants (0 to 3)
+  for (let i = 0; i < 4; i++) {
+    const filter = createQuadrantFilter(n, i);
+    
+    // Ask greedy logic to find the best move *strictly* within this quadrant
+    const move = greedyChoose(board, { 
+      ...opts, 
+      regionFilter: filter 
+    });
+
+    if (move) {
+      // Base score: High priority for placing numbers (10), lower for black tiles (3)
+      let score = move.type === 'place' ? 10 : 3;
+
+      // Heuristic: Center Bias
+      // We prefer moves closer to the center of the board to control space.
+      // Dist calculates Manhattan distance from center.
+      const center = (n - 1) / 2;
+      const dist = Math.abs(move.r - center) + Math.abs(move.c - center);
+      
+      // Subtract small penalty based on distance (closer = higher score)
+      score -= (dist * 0.05);
+
+      regionCandidates.push({ move, score });
     }
   }
 
+  // If we found candidates in the regions, pick the one with the highest score
   if (regionCandidates.length > 0) {
-    regionCandidates.sort((a,b) => b.score - a.score);
+    // Sort descending by score
+    regionCandidates.sort((a, b) => b.score - a.score);
     return regionCandidates[0].move;
   }
 
-  // fallback: if no regional candidate found, try global moves (greedy)
-  const fallback = greedyChoose(board, { botHasBlack: opts.botHasBlack });
-  return fallback;
+  // Fallback: If no moves were found in strict quadrants (unlikely, but possible 
+  // if board is very full or constrained), try a global search.
+  return greedyChoose(board, opts);
 }

@@ -1,7 +1,150 @@
-html,body{height:100%;margin:0;background:#0f0f12;color:#ddd;font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif}
-#game-container{width:760px;margin:28px auto;border-radius:10px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.6);background:linear-gradient(180deg,#17171b,#0f0f12)}
-.top-bar{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border-bottom:1px solid rgba(255,255,255,0.03)}
-.btn{background:#2f8ed9;color:#fff;border-radius:8px;padding:8px 12px;cursor:pointer;user-select:none}
-.small{font-size:0.9rem;opacity:0.95}
-.info{padding:8px 12px;color:#cfcfe0}
-.footer{padding:10px;text-align:center;color:#9aa}
+/* style.css */
+
+:root {
+  /* --- DARK THEME (Default) --- */
+  --bg-app: #0f0f12;
+  --bg-panel: #17171b;
+  --bg-panel-gradient: linear-gradient(180deg, #1d1d24, #121216);
+  --primary: #2f8ed9;
+  --primary-hover: #4aa4e6;
+  --text-main: #eeeeee;
+  --text-muted: #8888aa;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --shadow-color: rgba(0, 0, 0, 0.6);
+  --glow-color: rgba(47, 142, 217, 0.3);
+  
+  /* Layout Constants */
+  --radius: 12px;
+  --transition: 0.2s ease-in-out;
+}
+
+/* --- LIGHT THEME OVERRIDE --- */
+/* Add class="light-theme" to the body to activate */
+.light-theme {
+  --bg-app: #f0f2f5;
+  --bg-panel: #ffffff;
+  --bg-panel-gradient: linear-gradient(180deg, #ffffff, #f7f9fc);
+  --primary: #2f8ed9;
+  --primary-hover: #1e70b3;
+  --text-main: #1a1a20;
+  --text-muted: #555566;
+  --border-color: rgba(0, 0, 0, 0.08);
+  --shadow-color: rgba(0, 0, 0, 0.1);
+  --glow-color: rgba(47, 142, 217, 0.15);
+}
+
+/* --- BASE STYLES --- */
+html, body {
+  height: 100%;
+  margin: 0;
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* --- GAME CONTAINER --- */
+#game-container {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  border-radius: var(--radius);
+  overflow: hidden; /* Clips the canvas corners */
+  background: var(--bg-panel);
+  background: var(--bg-panel-gradient);
+  box-shadow: 
+    0 20px 50px -10px var(--shadow-color),
+    0 0 0 1px var(--border-color); /* Subtle border ring */
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* --- TOP BAR (HUD) --- */
+.top-bar {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.02); /* Glassy feel */
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border-color);
+  min-height: 40px;
+}
+
+/* --- TYPOGRAPHY & INFO --- */
+.info {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.info span {
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+.footer {
+  padding: 16px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* --- BUTTONS --- */
+.btn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--transition);
+  box-shadow: 0 4px 12px var(--glow-color);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.btn:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px var(--glow-color);
+}
+
+.btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 4px var(--glow-color);
+  filter: brightness(0.9);
+}
+
+/* --- CANVAS ADJUSTMENTS --- */
+canvas {
+  display: block; /* Removes bottom spacing bug */
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* --- RESPONSIVENESS --- */
+@media (max-width: 800px) {
+  #game-container {
+    margin: 10px;
+    width: calc(100% - 20px);
+    border-radius: 8px;
+  }
+  
+  .top-bar {
+    padding: 12px 16px;
+  }
+}
