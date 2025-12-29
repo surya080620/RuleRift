@@ -1,5 +1,6 @@
 // js/logic/rules.js
 import { cloneBoard } from './board.js';
+import { buildGridGraph, findArticulationPoints, key as _key } from './graph.js';
 
 /**
  * Checks if a specific number can be placed at (r, c).
@@ -9,29 +10,25 @@ export function canPlaceNumber(board, r, c, value) {
   const n = board.length;
   const cell = board[r][c];
 
-  // 1. Basic Checks
+  // 0. Quick rejection
   if (cell.isBlack) return false;
+  if (cell.value !== null) return false; // already filled
   if (value < 1 || value > n) return false;
 
-  // 2. Latin Square Constraint (Row & Column Uniqueness)
-  // We strictly ignore the current position (r,c) to allow re-validation of existing boards.
+  // 1. Latin Square Constraint (Row & Column Uniqueness)
   for (let i = 0; i < n; i++) {
-    // Check Row (ignoring self)
     if (i !== c) {
       const rowCell = board[r][i];
       if (!rowCell.isBlack && rowCell.value === value) return false;
     }
-    // Check Column (ignoring self)
     if (i !== r) {
       const colCell = board[i][c];
       if (!colCell.isBlack && colCell.value === value) return false;
     }
   }
 
-  // 3. Inequality Constraints
-  // Helper to get neighbor safely
+  // 2. Inequality Constraints
   const getCell = (rr, cc) => (rr >= 0 && rr < n && cc >= 0 && cc < n) ? board[rr][cc] : null;
-
   const neighbors = {
     up:    getCell(r - 1, c),
     down:  getCell(r + 1, c),
@@ -39,19 +36,12 @@ export function canPlaceNumber(board, r, c, value) {
     right: getCell(r, c + 1)
   };
 
-  // Helper: Validates "CurrentValue [Symbol] NeighborValue"
-  // Example: symbol '<' means Current < Neighbor
   const checkConstraint = (dir, neighbor) => {
-    const symbol = cell.inequalities[dir];
-    if (!symbol) return true; // No constraint defined
-    
-    // If neighbor is invalid, black, or empty, the constraint is technically "satisfied" 
-    // (or rather, not yet violated) until the neighbor is filled.
+    const symbol = cell.inequalities ? cell.inequalities[dir] : null;
+    if (!symbol) return true;
     if (!neighbor || neighbor.isBlack || neighbor.value === null) return true;
-
     if (symbol === '<') return value < neighbor.value;
     if (symbol === '>') return value > neighbor.value;
-    
     return true;
   };
 
@@ -64,19 +54,28 @@ export function canPlaceNumber(board, r, c, value) {
 }
 
 /**
+ * Precompute the white adjacency and articulation points for the current board.
+ * Returns { adj, aps } where adj is Map(node -> [neighbors]) and aps is Map(node -> true)
+ */
+export function precomputeWhiteGraph(board) {
+  const { adj } = buildGridGraph(board);
+  const aps = findArticulationPoints(adj);
+  return { adj, aps };
+}
+
+/**
  * Checks if a Black Tile can be placed at (r, c).
  * Validates: Adjacency (No blacks touching) + Connectivity (Whites remain 1 group).
+ * If `precomp` is passed (from precomputeWhiteGraph), it's used to avoid rebuilding the graph for each candidate.
  */
-export function canPlaceBlack(board, r, c) {
+export function canPlaceBlack(board, r, c, precomp = null) {
   const cell = board[r][c];
-  
-  // 1. Cannot replace existing black or existing number
   if (cell.isBlack || cell.value !== null) return false;
 
   const n = board.length;
 
-  // 2. Adjacency Rule: Cannot touch another black tile orthogonally
-  const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+  // 1. Adjacency Rule
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
   for (const [dr, dc] of dirs) {
     const nr = r + dr, nc = c + dc;
     if (nr >= 0 && nr < n && nc >= 0 && nc < n) {
@@ -84,24 +83,34 @@ export function canPlaceBlack(board, r, c) {
     }
   }
 
-  // 3. Connectivity Rule: Placing this black tile must not split the white tiles
-  // We simulate the placement and run a flood fill (BFS).
-  const sim = cloneBoard(board);
-  sim[r][c].isBlack = true;
+  // 2. Connectivity Rule: Use articulation points if available
+  if (!precomp) {
+    // fallback: naive simulation (safe but slower)
+    const sim = cloneBoard(board);
+    sim[r][c].isBlack = true;
+    return whitesRemainConnected(sim);
+  }
 
-  return whitesRemainConnected(sim);
+  const nodeKey = _key(r, c);
+  // If the board already treats this node as a white node, check articulation
+  if (!precomp.adj.has(nodeKey)) return true;
+
+  // If node is an articulation point, removing it would split whites -> illegal
+  if (precomp.aps.get(nodeKey)) return false;
+
+  // Otherwise safe
+  return true;
 }
 
 /**
  * Verifies that all White (non-black) tiles form a single connected component.
- * Uses BFS Flood Fill.
+ * Uses BFS.
  */
 export function whitesRemainConnected(board) {
   const n = board.length;
   let startNode = null;
   let whiteCount = 0;
 
-  // 1. Count white tiles and find a start point
   for (let r = 0; r < n; r++) {
     for (let c = 0; c < n; c++) {
       if (!board[r][c].isBlack) {
@@ -111,33 +120,26 @@ export function whitesRemainConnected(board) {
     }
   }
 
-  // Edge Case: If no white tiles exist (impossible in this game, but good for safety)
   if (whiteCount === 0) return true;
 
-  // 2. BFS Traversal
   const visited = new Set();
   const queue = [startNode];
-  // Simple unique key for Set: "r,c"
   visited.add(`${startNode[0]},${startNode[1]}`);
-  
   let connectedCount = 0;
-  const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
 
-  while (queue.length > 0) {
-    const [currR, currC] = queue.shift();
+  // Use head pointer for efficient queue
+  let head = 0;
+  while (head < queue.length) {
+    const [currR, currC] = queue[head++];
     connectedCount++;
-
     for (const [dr, dc] of dirs) {
-      const nr = currR + dr;
-      const nc = currC + dc;
-
-      // Boundary check
+      const nr = currR + dr, nc = currC + dc;
       if (nr >= 0 && nr < n && nc >= 0 && nc < n) {
-        // Must be white and not visited
         if (!board[nr][nc].isBlack) {
-          const key = `${nr},${nc}`;
-          if (!visited.has(key)) {
-            visited.add(key);
+          const k = `${nr},${nc}`;
+          if (!visited.has(k)) {
+            visited.add(k);
             queue.push([nr, nc]);
           }
         }
@@ -145,30 +147,20 @@ export function whitesRemainConnected(board) {
     }
   }
 
-  // 3. Result: Did we find every white tile?
   return connectedCount === whiteCount;
 }
 
 /**
- * Checks if the board is 100% full and valid.
- * This is the Victory Condition.
+ * Checks if the board is complete and valid.
  */
 export function isBoardComplete(board) {
   const n = board.length;
-
   for (let r = 0; r < n; r++) {
     for (let c = 0; c < n; c++) {
       const cell = board[r][c];
-
-      // If any white tile is empty, board is incomplete
       if (!cell.isBlack && cell.value === null) return false;
-
-      // If filled, check validity again to ensure no rules were broken
-      // (This re-uses the robust canPlaceNumber which handles self-exclusion)
       if (!cell.isBlack) {
-        if (!canPlaceNumber(board, r, c, cell.value)) {
-          return false;
-        }
+        if (!canPlaceNumber(board, r, c, cell.value)) return false;
       }
     }
   }
@@ -177,20 +169,34 @@ export function isBoardComplete(board) {
 
 /**
  * Returns a list of all numbers (1..N) that are valid for a specific cell.
- * Used by AI and UI hints.
  */
 export function getValidNumbers(board, r, c) {
   const n = board.length;
   const valid = [];
-  
-  // Optimization: If cell is black or already filled, no options (context dependent)
-  // Usually this is called on an empty cell.
-  if (board[r][c].isBlack) return [];
+  if (board[r][c].isBlack || board[r][c].value !== null) return valid;
 
   for (let v = 1; v <= n; v++) {
-    if (canPlaceNumber(board, r, c, v)) {
-      valid.push(v);
-    }
+    if (canPlaceNumber(board, r, c, v)) valid.push(v);
   }
   return valid;
+}
+
+/**
+ * Domain initialization for CSP-style propagation (simple version).
+ */
+export function initDomains(board) {
+  const n = board.length;
+  const domains = Array.from({ length: n }, () => Array.from({ length: n }, () => new Set()));
+
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      const cell = board[r][c];
+      if (cell.isBlack || cell.value !== null) continue;
+      for (let v = 1; v <= n; v++) {
+        if (canPlaceNumber(board, r, c, v)) domains[r][c].add(v);
+      }
+    }
+  }
+
+  return domains;
 }
