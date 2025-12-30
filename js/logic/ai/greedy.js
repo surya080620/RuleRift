@@ -1,19 +1,31 @@
 // js/logic/ai/greedy.js
-// Greedy Strategy (graph-aware)
-// Uses lightweight mutation/backtracking and your graph.js utilities.
+// Greedy Strategy (graph-aware) — optimized
+// Core idea: Analyze each move's IMMEDIATE impact using graph + domain changes
+// No deep search, but fast structural evaluation.
+
+// ------------------------------------------------------------
+// IMPORTS
+// moves.js  -> provides legal move generation
+// rules.js  -> validity checks for numbers
+// graph.js  -> adjacency & articulation detection
+// ------------------------------------------------------------
 
 import * as moves from '../moves.js';
 import * as rules from '../rules.js';
 import { buildGridGraph, findArticulationPoints } from '../graph.js';
 
-/** Helper: count connected components in adjacency (Map<string, string[]>). */
+// ------------------------------------------------------------
+// FUNCTION: countComponents(adj)
+// PURPOSE: Count how many connected clusters exist in the board graph.
+// Meaning: More components = board is fragmented (bad structure)
+// Optimized: Uses DFS/Stack, no recursion to avoid overhead
+// ------------------------------------------------------------
 function countComponents(adj) {
   const seen = new Set();
   let comps = 0;
   for (const start of adj.keys()) {
     if (seen.has(start)) continue;
     comps++;
-    // BFS/stack
     const stack = [start];
     seen.add(start);
     while (stack.length) {
@@ -30,152 +42,230 @@ function countComponents(adj) {
   return comps;
 }
 
-/** Score domain: scan empty white cells for valid numbers. Return {score, dead}. */
-function calcDomainScore(board) {
+// ------------------------------------------------------------
+// FUNCTION: buildValidCounts(board)
+// PURPOSE: Pre-calculate valid number options for each cell ONCE.
+// Used for domain scoring.
+// Benefit: Prevents recalculating full board on every move.
+// ------------------------------------------------------------
+function buildValidCounts(board) {
   const n = board.length;
-  let score = 0;
+  const validCounts = Array.from({ length: n }, () => Array(n).fill(0));
   for (let r = 0; r < n; r++) {
     for (let c = 0; c < n; c++) {
       const cell = board[r][c];
       if (cell.isBlack || cell.value !== null) continue;
-      const vCount = rules.getValidNumbers(board, r, c).length;
-      if (vCount === 0) return { score: -Infinity, dead: true };
-      score -= vCount; // fewer options => higher (less negative) priority
+      validCounts[r][c] = rules.getValidNumbers(board, r, c).length;
     }
   }
-  return { score, dead: false };
+  return validCounts;
 }
 
-/** Evaluate a single move by applying it (mutate), analyzing, then reverting. */
-function evaluateMoveQuality(board, move) {
+// ------------------------------------------------------------
+// FUNCTION: sumDomainScoreFromCounts(validCounts)
+// PURPOSE: Convert cached validity numbers into score.
+// Logic: More options = worse (score goes negative)
+// ------------------------------------------------------------
+function sumDomainScoreFromCounts(validCounts) {
+  let score = 0;
+  for (let r = 0; r < validCounts.length; r++) {
+    for (let c = 0; c < validCounts.length; c++) {
+      const v = validCounts[r][c] || 0;
+      if (v > 0 || v === 0) score -= v;
+    }
+  }
+  return score;
+}
+
+// ------------------------------------------------------------
+// FUNCTION: getAffectedPositions(r,c)
+// PURPOSE: When a move happens at (r,c) only NEARBY cells matter.
+// We only recompute domain around: row, column, neighbors
+// Major Optimization: Avoids full board recalculation.
+// ------------------------------------------------------------
+function getAffectedPositions(board, r, c) {
+  const n = board.length;
+  const positions = new Set();
+
+  for (let i = 0; i < n; i++) {
+    positions.add(`${r},${i}`);
+    positions.add(`${i},${c}`);
+  }
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+  for (const [dr, dc] of dirs) {
+    const nr = r + dr, nc = c + dc;
+    if (nr >= 0 && nr < n && nc >= 0 && nc < n) positions.add(`${nr},${nc}`);
+  }
+
+  return Array.from(positions).map(k => k.split(',').map(Number));
+}
+
+// ------------------------------------------------------------
+// FUNCTION: simulateAdjRemoval(preAdj,nodeKey)
+// PURPOSE: When black tile placed, remove the cell from graph.
+// Does NOT rebuild full graph → LOCAL simulation only.
+// Saves performance.
+// ------------------------------------------------------------
+function simulateAdjRemoval(preAdj, nodeKey) {
+  const newAdj = new Map();
+  for (const [k, arr] of preAdj.entries()) {
+    if (k === nodeKey) continue;
+    newAdj.set(k, arr.filter(x => x !== nodeKey));
+  }
+  return newAdj;
+}
+
+// ------------------------------------------------------------
+// FUNCTION: evaluateMoveQuality()
+// PURPOSE: Core evaluation for EACH move.
+// This does:
+//  1. Mutate cell (apply move)
+//  2. Local domain recalculation (row/col/neighbors only)
+//  3. Graph impact check (only for black tiles)
+//  4. Apply scoring rules
+//  5. Undo mutation (revert)
+//
+// Returns: Score (Number)  — higher = better move
+// ------------------------------------------------------------
+function evaluateMoveQuality(board, move, preAdj, preArtCount, preCompCount, preValidCounts, preDomainScore) {
   const { r, c, type, value } = move;
   const cell = board[r][c];
 
-  // Save previous state
   const prevValue = cell.value;
   const prevBlack = cell.isBlack;
 
-  // Pre-graph (before applying move)
-  const pre = buildGridGraph(board);
-  const preAdj = pre.adj;
-  const preArtMap = findArticulationPoints(preAdj);
-  const preArtCount = [...preArtMap.keys ? preArtMap.keys() : preArtMap].length || Array.from(preArtMap || []).length;
-  // countComponents requires Map keys; if board all black/filled preAdj may be empty -> components 0
-  const preCompCount = preAdj.size ? countComponents(preAdj) : 0;
+  const nodeKey = `${r},${c}`;
 
-  // Apply move (mutate)
+  // Apply mutation
   if (type === 'place') cell.value = value;
   else if (type === 'black') cell.isBlack = true;
 
-  // Domain check (fast fail)
-  const domain = calcDomainScore(board);
-  if (domain.dead) {
-    // revert and return fatal
-    cell.value = prevValue;
-    cell.isBlack = prevBlack;
-    return -Infinity;
+  // ------------------------------------------------------------
+  // LOCAL DOMAIN CHECK — MAIN OPTIMIZATION
+  // Only check affected cells, not full grid
+  // ------------------------------------------------------------
+  let domainScore = preDomainScore;
+  const affected = getAffectedPositions(board, r, c);
+
+  for (const [ar, ac] of affected) {
+    const oldCount = (preValidCounts[ar] && preValidCounts[ar][ac]) ? preValidCounts[ar][ac] : 0;
+    const aCell = board[ar][ac];
+
+    let newCount = 0;
+    if (!aCell.isBlack && aCell.value === null) {
+      newCount = rules.getValidNumbers(board, ar, ac).length;
+    }
+
+    if (!aCell.isBlack && aCell.value === null && newCount === 0) {
+      cell.value = prevValue;
+      cell.isBlack = prevBlack;
+      return -Infinity;
+    }
+
+    domainScore += (oldCount - newCount);
   }
 
-  // Post-graph (after move)
-  const post = buildGridGraph(board);
-  const postAdj = post.adj;
-  const postArtMap = findArticulationPoints(postAdj);
-  // compute sizes
-  let postArtCount = 0;
-  if (postArtMap && typeof postArtMap.forEach === 'function') {
-    postArtMap.forEach((v, k) => { if (v) postArtCount++; });
-  } else {
-    // If findArticulationPoints returns a Map-like object, handle gracefully
-    postArtCount = postArtMap ? Array.from(postArtMap.keys()).length : 0;
-  }
-  const postCompCount = postAdj.size ? countComponents(postAdj) : 0;
+  // ------------------------------------------------------------
+  // GRAPH IMPACT — ONLY for black tiles
+  // Number placements keep graph SAME (big boost for speed)
+  // ------------------------------------------------------------
+  let postAdj = preAdj;
+  let postArtCount = preArtCount;
+  let postCompCount = preCompCount;
 
-  // Scoring heuristics
+  if (type === 'black') {
+    postAdj = simulateAdjRemoval(preAdj, nodeKey);
+    postCompCount = postAdj.size ? countComponents(postAdj) : 0;
+
+    const postArtMap = findArticulationPoints(postAdj);
+    let artCount = 0;
+    postArtMap.forEach(v => { if (v) artCount++; });
+    postArtCount = artCount;
+  }
+
+  // ------------------------------------------------------------
+  // SCORING MODEL
+  // Domain + Structure + Heuristics
+  // ------------------------------------------------------------
   let score = 0;
 
-  // 1. Domain score (from calcDomainScore)
-  score += domain.score;
+  score += domainScore;
 
-  // 2. Fragmentation penalty: heavily penalize creating extra components
-  if (postCompCount > preCompCount) {
-    score -= (postCompCount - preCompCount) * 60; // strong penalty per extra fragment
-  } else if (postCompCount < preCompCount) {
-    score += (preCompCount - postCompCount) * 30; // bonus for merging components
-  }
+  if (postCompCount > preCompCount) score -= (postCompCount - preCompCount) * 60;
+  else if (postCompCount < preCompCount) score += (preCompCount - postCompCount) * 30;
 
-  // 3. Articulation (chokepoint) changes
-  if (postArtCount > preArtCount) {
-    score -= (postArtCount - preArtCount) * 6; // small penalty per new chokepoint
-  } else if (postArtCount < preArtCount) {
-    score += (preArtCount - postArtCount) * 8; // reward if we remove chokepoints
-  }
+  if (postArtCount > preArtCount) score -= (postArtCount - preArtCount) * 6;
+  else if (postArtCount < preArtCount) score += (preArtCount - postArtCount) * 8;
 
-  // 4. Absolute penalties/bonuses
-  // Prefer boards with no articulation points
   if (postArtCount === 0) score += 6;
 
-  // 5. Type bias: prefer placing numbers over blacks (conserve blacks)
-  const typeBonus = (type === 'place') ? 20 : 2;
-  score += typeBonus;
+  score += (type === 'place') ? 20 : 2;
 
-  // 6. Center control bias (small)
   const n = board.length;
   const center = (n - 1) / 2;
   const dist = Math.abs(r - center) + Math.abs(c - center);
   score += Math.max(0, 6 - dist);
 
-  // 7. Minor tie-breaker: prefer moves that increase local degree (more neighbors)
-  // Calculate degree at (r,c) in postAdj if white (if black, degree 0)
-  const nodeKey = `${r},${c}`;
   const deg = postAdj.has(nodeKey) ? (postAdj.get(nodeKey) || []).length : 0;
   score += Math.min(deg, 4) * 0.7;
 
-  // Revert
   cell.value = prevValue;
   cell.isBlack = prevBlack;
 
   return score;
 }
 
+// ------------------------------------------------------------
+// FUNCTION: greedyChoose()
+// PURPOSE: Main AI entry point — returns BEST move.
+// Flow:
+//  1. Get legal moves
+//  2. Precompute graph + domain ONCE
+//  3. Score each move (evaluateMoveQuality)
+//  4. Pick highest score
+// ------------------------------------------------------------
 export function greedyChoose(board, opts = { botHasBlack: false, regionFilter: null }) {
-  // 1. Gather Legal Moves
+
   let candidates = moves.getLegalMoves(board, 2, { playerHasBlack: opts.botHasBlack });
 
-  // 2. Apply region filter if provided
   if (opts.regionFilter) {
     candidates = candidates.filter(m => opts.regionFilter(m.r, m.c));
   }
-
   if (!candidates || candidates.length === 0) return null;
 
-  // 3. Small optimization: if only a few candidates, evaluate all; otherwise limit to top-K by quick heuristic
-  // Quick heuristic: prefer 'place' over 'black' and prefer center proximity (cheap to compute)
-  const QUICK_LIMIT = 120; // large but safe; for small boards all candidates will be kept
+  // PRECOMPUTATION: Done ONCE (major optimization)
+  const graphInfo = buildGridGraph(board);
+  const preAdj = graphInfo.adj;
+  const preArtMap = findArticulationPoints(preAdj);
+
+  let preArtCount = 0;
+  preArtMap.forEach(v => { if (v) preArtCount++; });
+
+  const preCompCount = preAdj.size ? countComponents(preAdj) : 0;
+
+  const preValidCounts = buildValidCounts(board);
+  const preDomainScore = sumDomainScoreFromCounts(preValidCounts);
+//Sorting is done here
+  // Candidate LIMIT — optimization for large branching
+  const QUICK_LIMIT = 120;
   if (candidates.length > QUICK_LIMIT) {
     candidates.sort((a, b) => {
-      // prefer place
       if (a.type !== b.type) return a.type === 'place' ? -1 : 1;
-      // center proximity
       const n = board.length;
       const center = (n - 1) / 2;
-      const da = Math.abs(a.r - center) + Math.abs(a.c - center);
-      const db = Math.abs(b.r - center) + Math.abs(b.c - center);
-      return da - db;
+      return (Math.abs(a.r - center) + Math.abs(a.c - center)) - (Math.abs(b.r - center) + Math.abs(b.c - center));
     });
     candidates = candidates.slice(0, QUICK_LIMIT);
   }
 
-  // Slight shuffle to avoid absolute determinism in ties
   candidates.sort(() => Math.random() - 0.5);
 
   let best = null;
   let bestScore = -Infinity;
 
   for (const mv of candidates) {
-    const sc = evaluateMoveQuality(board, mv);
-    // tiny jitter to break ties but preserve ordering
-    const jitter = Math.random() * 1e-6;
-    const finalScore = sc + jitter;
+    const sc = evaluateMoveQuality(board, mv, preAdj, preArtCount, preCompCount, preValidCounts, preDomainScore);
+    const finalScore = sc + Math.random() * 1e-6;
     if (finalScore > bestScore) {
       bestScore = finalScore;
       best = mv;

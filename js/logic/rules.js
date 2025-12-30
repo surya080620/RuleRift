@@ -4,8 +4,9 @@ import { buildGridGraph, findArticulationPoints, key as _key } from './graph.js'
 
 /**
  * Checks if a specific number can be placed at (r, c).
- * Validates: Latin Square (Row/Col uniqueness) + Inequalities.
+ * Validates: Latin Square (Row/Col uniqueness) + Inequalities.(greedy)
  */
+
 export function canPlaceNumber(board, r, c, value) {
   const n = board.length;
   const cell = board[r][c];
@@ -66,7 +67,7 @@ export function precomputeWhiteGraph(board) {
 /**
  * Checks if a Black Tile can be placed at (r, c).
  * Validates: Adjacency (No blacks touching) + Connectivity (Whites remain 1 group).
- * If `precomp` is passed (from precomputeWhiteGraph), it's used to avoid rebuilding the graph for each candidate.
+ * If `precomp` is passed (from precomputeWhiteGraph), it's used to avoid rebuilding the graph for each candidate.(GREEDY)
  */
 export function canPlaceBlack(board, r, c, precomp = null) {
   const cell = board[r][c];
@@ -168,7 +169,7 @@ export function isBoardComplete(board) {
 }
 
 /**
- * Returns a list of all numbers (1..N) that are valid for a specific cell.
+ * Returns a list of all numbers (1..N) that are valid for a specific cell.(greedy)
  */
 export function getValidNumbers(board, r, c) {
   const n = board.length;
@@ -182,7 +183,7 @@ export function getValidNumbers(board, r, c) {
 }
 
 /**
- * Domain initialization for CSP-style propagation (simple version).
+ *used for dp not for greedy domain addressing.
  */
 export function initDomains(board) {
   const n = board.length;

@@ -372,10 +372,16 @@ export default class GameScene extends Phaser.Scene {
     const hasBlack = this.currentPlayer === 1 ? this.playerHasBlack : this.botHasBlack;
     const legal = moves.getLegalMoves(this.board, this.currentPlayer, { playerHasBlack: hasBlack });
 
-    if (!legal || legal.length === 0) {
-      const who = this.currentPlayer === 1 ? 'Player' : 'Bot';
-      this.endGame('No Moves', `${who} has no legal moves. Game Over.`);
-    }
+   if (!legal || legal.length === 0) {
+  if (this.currentPlayer === 1) {
+    // PLAYER has no moves → Bot wins
+    this.endGame('🤖 BOT WINS!', 'You have no legal moves remaining. Try a new strategy!');
+  } else {
+    // BOT has no moves → Player wins
+    this.endGame('🎉 YOU WON!', 'The bot ran out of moves. Victory is yours!');
+  }
+  return;
+}
   }
 
   makeAIMove() {
@@ -403,9 +409,10 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (!move) {
-      this.endGame('No moves', 'Bot has no legal moves.');
-      return;
-    }
+  // If bot has no moves, this means PLAYER wins
+  this.endGame('🎉 YOU WON!', 'The bot has no legal moves left. Excellent strategy!');
+  return;
+}
 
     this.executeMove(move);
   }
