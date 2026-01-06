@@ -369,20 +369,31 @@ export default class GameScene extends Phaser.Scene {
   }
 
   checkStartOfTurn() {
-    const hasBlack = this.currentPlayer === 1 ? this.playerHasBlack : this.botHasBlack;
-    const legal = moves.getLegalMoves(this.board, this.currentPlayer, { playerHasBlack: hasBlack });
+  // Compute whether the current actor (player or bot) still has a black tile
+  const hasBlack = this.currentPlayer === 1 ? this.playerHasBlack : this.botHasBlack;
 
-   if (!legal || legal.length === 0) {
-  if (this.currentPlayer === 1) {
-    // PLAYER has no moves → Bot wins
-    this.endGame('🤖 BOT WINS!', 'You have no legal moves remaining. Try a new strategy!');
-  } else {
-    // BOT has no moves → Player wins
-    this.endGame('🎉 YOU WON!', 'The bot ran out of moves. Victory is yours!');
-  }
-  return;
+  // Ask the single source of truth (moves.getLegalMoves) about legal moves
+  const legal = moves.getLegalMoves(this.board, this.currentPlayer, { playerHasBlack: hasBlack });
+
+  // If there are any legal moves, we're fine — continue the game
+  if (legal && legal.length > 0) return;
+
+  // Otherwise truly no moves remain -> end the game (preserve previous message style)
+  const who = this.currentPlayer === 1 ? 'Player' : 'Bot';
+  if (who === 'Player') {
+  this.endGame(
+    '🤖 OOPS… BOT WINS!',
+    'You have no legal moves remaining. Try a different strategy next time!'
+  );
+} else {
+  this.endGame(
+    '🎉 HURRAY! YOU WIN!',
+    'The bot has no legal moves left. Your strategy paid off!'
+  );
 }
-  }
+
+}
+
 
   makeAIMove() {
     if (this.gameOver) return;

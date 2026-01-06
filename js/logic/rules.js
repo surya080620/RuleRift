@@ -86,7 +86,6 @@ export function canPlaceBlack(board, r, c, precomp = null) {
 
   // 2. Connectivity Rule: Use articulation points if available
   if (!precomp) {
-    // fallback: naive simulation (safe but slower)
     const sim = cloneBoard(board);
     sim[r][c].isBlack = true;
     return whitesRemainConnected(sim);

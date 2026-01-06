@@ -245,17 +245,57 @@ export function greedyChoose(board, opts = { botHasBlack: false, regionFilter: n
 
   const preValidCounts = buildValidCounts(board);
   const preDomainScore = sumDomainScoreFromCounts(preValidCounts);
-//Sorting is done here
+  //Sorting is done here
   // Candidate LIMIT — optimization for large branching
   const QUICK_LIMIT = 120;
   if (candidates.length > QUICK_LIMIT) {
-    candidates.sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'place' ? -1 : 1;
-      const n = board.length;
-      const center = (n - 1) / 2;
-      return (Math.abs(a.r - center) + Math.abs(a.c - center)) - (Math.abs(b.r - center) + Math.abs(b.c - center));
-    });
-    candidates = candidates.slice(0, QUICK_LIMIT);
+    // BUCKET-SORT STYLE PRIORITIZATION (linear-ish)
+    // 1) prefer 'place' over 'black'
+    // 2) within each type, prefer smaller Manhattan distance to center
+    const n = board.length;
+    const center = (n - 1) / 2;
+    const maxDist = 2 * (n - 1); // maximum possible Manhattan distance on grid
+
+    // prepare buckets: indices 0..maxDist
+    const placeBuckets = Array.from({ length: maxDist + 1 }, () => []);
+    const blackBuckets = Array.from({ length: maxDist + 1 }, () => []);
+
+    for (const c of candidates) {
+      const dist = Math.abs(c.r - center) + Math.abs(c.c - center);
+      const d = Math.max(0, Math.min(maxDist, Math.floor(dist))); // clamp to bucket range
+      if (c.type === 'place') placeBuckets[d].push(c);
+      else blackBuckets[d].push(c);
+    }
+
+    // flatten buckets starting from nearest to center for 'place', then 'black'
+    const prioritized = [];
+    for (let d = 0; d <= maxDist && prioritized.length < QUICK_LIMIT; d++) {
+      if (placeBuckets[d].length) {
+        for (const item of placeBuckets[d]) {
+          prioritized.push(item);
+          if (prioritized.length >= QUICK_LIMIT) break;
+        }
+      }
+    }
+    // if still room, take from black buckets (near to far)
+    for (let d = 0; d <= maxDist && prioritized.length < QUICK_LIMIT; d++) {
+      if (blackBuckets[d].length) {
+        for (const item of blackBuckets[d]) {
+          prioritized.push(item);
+          if (prioritized.length >= QUICK_LIMIT) break;
+        }
+      }
+    }
+
+    // In rare case buckets did not reach QUICK_LIMIT (shouldn't normally), fill with any leftovers
+    if (prioritized.length < QUICK_LIMIT) {
+      for (const c of candidates) {
+        if (prioritized.length >= QUICK_LIMIT) break;
+        if (!prioritized.includes(c)) prioritized.push(c);
+      }
+    }
+
+    candidates = prioritized.slice(0, QUICK_LIMIT);
   }
 
   candidates.sort(() => Math.random() - 0.5);
@@ -274,3 +314,4 @@ export function greedyChoose(board, opts = { botHasBlack: false, regionFilter: n
 
   return best;
 }
+
