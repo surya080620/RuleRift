@@ -107,14 +107,33 @@ export function dcChoose(board, opts = { botHasBlack: false, verbose: false }) {
   for (let q = 0; q < 4; q++) {
     const regionFilter = quadrantFilterFactory(n, q);
 
-    const mv = greedyChoose(
-      board,
-      { ...opts, regionFilter, quickLimit: 60 },
-      cache
-    );
+    // ---------- Regional greedy call with safe error handling ----------
+    let mv = null;
+    try {
+      mv = greedyChoose(
+        board,
+        { ...opts, regionFilter, quickLimit: 60 },
+        cache
+      );
+    } catch (e) {
+      if (verbose) console.warn('[DC] greedyChoose threw for region', q, e);
+      mv = null;
+    }
 
-    if (!mv) continue;
+    // If greedy returned nothing, skip this region
+    if (!mv) {
+      if (verbose) console.log('[DC] region', q, 'returned no move; skipping');
+      continue;
+    }
 
+    // Validate coordinates — skip malformed moves
+    const { r, c } = getRC(mv);
+    if (r == null || c == null) {
+      if (verbose) console.warn('[DC] region', q, 'move lacks coordinates; skipping', mv);
+      continue;
+    }
+
+    // Score the candidate (unchanged)
     const sc = scoreMove(mv, n, { botHasBlack });
     if (sc > bestScore) {
       bestScore = sc;
@@ -122,11 +141,28 @@ export function dcChoose(board, opts = { botHasBlack: false, verbose: false }) {
     }
   }
 
-  const global = greedyChoose(board, opts, cache);
+  // ---------- Global greedy safety candidate (safe) ----------
+  let global = null;
+  try {
+    global = greedyChoose(board, opts, cache);
+  } catch (e) {
+    if (verbose) console.warn('[DC] global greedy threw', e);
+    global = null;
+  }
+
   if (global) {
     const gscore = scoreMove(global, n, { botHasBlack }) - 0.1;
     if (gscore > bestScore) bestMove = global;
   }
 
-  return bestMove ?? greedyChoose(board, opts, cache);
+  // ---------- Final fallback: attempt a safe greedy before returning ----------
+  if (bestMove) return bestMove;
+
+  try {
+    // final attempt with cache passed through; if this throws, return null to fail safely
+    return greedyChoose(board, opts, cache);
+  } catch (e) {
+    if (verbose) console.warn('[DC] final fallback greedyChoose threw', e);
+    return null;
+  }
 }
