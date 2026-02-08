@@ -3,22 +3,12 @@
 // Core idea: Analyze each move's IMMEDIATE impact using graph + domain changes
 // No deep search, but fast structural evaluation.
 
-// ------------------------------------------------------------
-// IMPORTS
-// moves.js  -> provides legal move generation
-// rules.js  -> validity checks for numbers
-// graph.js  -> adjacency & articulation detection
-// ------------------------------------------------------------
-
 import * as moves from '../moves.js';
 import * as rules from '../rules.js';
 import { buildGridGraph, findArticulationPoints } from '../graph.js';
 
 // ------------------------------------------------------------
 // FUNCTION: countComponents(adj)
-// PURPOSE: Count how many connected clusters exist in the board graph.
-// Meaning: More components = board is fragmented (bad structure)
-// Optimized: Uses DFS/Stack, no recursion to avoid overhead
 // ------------------------------------------------------------
 function countComponents(adj) {
   const seen = new Set();
@@ -44,9 +34,6 @@ function countComponents(adj) {
 
 // ------------------------------------------------------------
 // FUNCTION: buildValidCounts(board)
-// PURPOSE: Pre-calculate valid number options for each cell ONCE.
-// Used for domain scoring.
-// Benefit: Prevents recalculating full board on every move.
 // ------------------------------------------------------------
 function buildValidCounts(board) {
   const n = board.length;
@@ -63,25 +50,20 @@ function buildValidCounts(board) {
 
 // ------------------------------------------------------------
 // FUNCTION: sumDomainScoreFromCounts(validCounts)
-// PURPOSE: Convert cached validity numbers into score.
-// Logic: More options = worse (score goes negative)
 // ------------------------------------------------------------
 function sumDomainScoreFromCounts(validCounts) {
   let score = 0;
   for (let r = 0; r < validCounts.length; r++) {
     for (let c = 0; c < validCounts.length; c++) {
       const v = validCounts[r][c] || 0;
-      if (v > 0 || v === 0) score -= v;
+      score -= v;
     }
   }
   return score;
 }
 
 // ------------------------------------------------------------
-// FUNCTION: getAffectedPositions(r,c)
-// PURPOSE: When a move happens at (r,c) only NEARBY cells matter.
-// We only recompute domain around: row, column, neighbors
-// Major Optimization: Avoids full board recalculation.
+// FUNCTION: getAffectedPositions(board, r, c)
 // ------------------------------------------------------------
 function getAffectedPositions(board, r, c) {
   const n = board.length;
@@ -91,20 +73,20 @@ function getAffectedPositions(board, r, c) {
     positions.add(`${r},${i}`);
     positions.add(`${i},${c}`);
   }
+
   const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
   for (const [dr, dc] of dirs) {
     const nr = r + dr, nc = c + dc;
-    if (nr >= 0 && nr < n && nc >= 0 && nc < n) positions.add(`${nr},${nc}`);
+    if (nr >= 0 && nr < n && nc >= 0 && nc < n) {
+      positions.add(`${nr},${nc}`);
+    }
   }
 
   return Array.from(positions).map(k => k.split(',').map(Number));
 }
 
 // ------------------------------------------------------------
-// FUNCTION: simulateAdjRemoval(preAdj,nodeKey)
-// PURPOSE: When black tile placed, remove the cell from graph.
-// Does NOT rebuild full graph → LOCAL simulation only.
-// Saves performance.
+// FUNCTION: simulateAdjRemoval(preAdj, nodeKey)
 // ------------------------------------------------------------
 function simulateAdjRemoval(preAdj, nodeKey) {
   const newAdj = new Map();
@@ -117,38 +99,31 @@ function simulateAdjRemoval(preAdj, nodeKey) {
 
 // ------------------------------------------------------------
 // FUNCTION: evaluateMoveQuality()
-// PURPOSE: Core evaluation for EACH move.
-// This does:
-//  1. Mutate cell (apply move)
-//  2. Local domain recalculation (row/col/neighbors only)
-//  3. Graph impact check (only for black tiles)
-//  4. Apply scoring rules
-//  5. Undo mutation (revert)
-//
-// Returns: Score (Number)  — higher = better move
 // ------------------------------------------------------------
-function evaluateMoveQuality(board, move, preAdj, preArtCount, preCompCount, preValidCounts, preDomainScore) {
+function evaluateMoveQuality(
+  board,
+  move,
+  preAdj,
+  preArtCount,
+  preCompCount,
+  preValidCounts,
+  preDomainScore
+) {
   const { r, c, type, value } = move;
   const cell = board[r][c];
 
   const prevValue = cell.value;
   const prevBlack = cell.isBlack;
-
   const nodeKey = `${r},${c}`;
 
-  // Apply mutation
   if (type === 'place') cell.value = value;
   else if (type === 'black') cell.isBlack = true;
 
-  // ------------------------------------------------------------
-  // LOCAL DOMAIN CHECK — MAIN OPTIMIZATION
-  // Only check affected cells, not full grid
-  // ------------------------------------------------------------
   let domainScore = preDomainScore;
   const affected = getAffectedPositions(board, r, c);
 
   for (const [ar, ac] of affected) {
-    const oldCount = (preValidCounts[ar] && preValidCounts[ar][ac]) ? preValidCounts[ar][ac] : 0;
+    const oldCount = preValidCounts[ar]?.[ac] ?? 0;
     const aCell = board[ar][ac];
 
     let newCount = 0;
@@ -165,10 +140,6 @@ function evaluateMoveQuality(board, move, preAdj, preArtCount, preCompCount, pre
     domainScore += (oldCount - newCount);
   }
 
-  // ------------------------------------------------------------
-  // GRAPH IMPACT — ONLY for black tiles
-  // Number placements keep graph SAME (big boost for speed)
-  // ------------------------------------------------------------
   let postAdj = preAdj;
   let postArtCount = preArtCount;
   let postCompCount = preCompCount;
@@ -183,12 +154,7 @@ function evaluateMoveQuality(board, move, preAdj, preArtCount, preCompCount, pre
     postArtCount = artCount;
   }
 
-  // ------------------------------------------------------------
-  // SCORING MODEL
-  // Domain + Structure + Heuristics
-  // ------------------------------------------------------------
   let score = 0;
-
   score += domainScore;
 
   if (postCompCount > preCompCount) score -= (postCompCount - preCompCount) * 60;
@@ -198,7 +164,6 @@ function evaluateMoveQuality(board, move, preAdj, preArtCount, preCompCount, pre
   else if (postArtCount < preArtCount) score += (preArtCount - postArtCount) * 8;
 
   if (postArtCount === 0) score += 6;
-
   score += (type === 'place') ? 20 : 2;
 
   const n = board.length;
@@ -217,81 +182,67 @@ function evaluateMoveQuality(board, move, preAdj, preArtCount, preCompCount, pre
 
 // ------------------------------------------------------------
 // FUNCTION: greedyChoose()
-// PURPOSE: Main AI entry point — returns BEST move.
-// Flow:
-//  1. Get legal moves
-//  2. Precompute graph + domain ONCE
-//  3. Score each move (evaluateMoveQuality)
-//  4. Pick highest score
 // ------------------------------------------------------------
-export function greedyChoose(board, opts = { botHasBlack: false, regionFilter: null }) {
-
-  let candidates = moves.getLegalMoves(board, 2, { playerHasBlack: opts.botHasBlack });
+export function greedyChoose(
+  board,
+  opts = { botHasBlack: false, regionFilter: null, quickLimit: null },
+  cache = null
+) {
+  let candidates = moves.getLegalMoves(board, 2, {
+    playerHasBlack: opts.botHasBlack
+  });
 
   if (opts.regionFilter) {
     candidates = candidates.filter(m => opts.regionFilter(m.r, m.c));
   }
   if (!candidates || candidates.length === 0) return null;
 
-  // PRECOMPUTATION: Done ONCE (major optimization)
-  const graphInfo = buildGridGraph(board);
-  const preAdj = graphInfo.adj;
-  const preArtMap = findArticulationPoints(preAdj);
+  // -------- SHARED PRECOMPUTATION (cached if provided) --------
+  const preAdj = cache?.preAdj ?? buildGridGraph(board).adj;
 
-  let preArtCount = 0;
-  preArtMap.forEach(v => { if (v) preArtCount++; });
+  const preArtCount = cache?.preArtCount ?? (() => {
+    const map = findArticulationPoints(preAdj);
+    let c = 0;
+    map.forEach(v => { if (v) c++; });
+    return c;
+  })();
 
-  const preCompCount = preAdj.size ? countComponents(preAdj) : 0;
+  const preCompCount = cache?.preCompCount ??
+    (preAdj.size ? countComponents(preAdj) : 0);
 
-  const preValidCounts = buildValidCounts(board);
-  const preDomainScore = sumDomainScoreFromCounts(preValidCounts);
-  //Sorting is done here
-  // Candidate LIMIT — optimization for large branching
-  const QUICK_LIMIT = 120;
+  const preValidCounts = cache?.preValidCounts ?? buildValidCounts(board);
+  const preDomainScore = cache?.preDomainScore ??
+    sumDomainScoreFromCounts(preValidCounts);
+
+  // -------- CANDIDATE LIMITING --------
+  const QUICK_LIMIT = opts.quickLimit ?? 120;
+
   if (candidates.length > QUICK_LIMIT) {
-    // BUCKET-SORT STYLE PRIORITIZATION (linear-ish)
-    // 1) prefer 'place' over 'black'
-    // 2) within each type, prefer smaller Manhattan distance to center
     const n = board.length;
     const center = (n - 1) / 2;
-    const maxDist = 2 * (n - 1); // maximum possible Manhattan distance on grid
+    const maxDist = 2 * (n - 1);
 
-    // prepare buckets: indices 0..maxDist
     const placeBuckets = Array.from({ length: maxDist + 1 }, () => []);
     const blackBuckets = Array.from({ length: maxDist + 1 }, () => []);
 
     for (const c of candidates) {
       const dist = Math.abs(c.r - center) + Math.abs(c.c - center);
-      const d = Math.max(0, Math.min(maxDist, Math.floor(dist))); // clamp to bucket range
+      const d = Math.max(0, Math.min(maxDist, Math.floor(dist)));
       if (c.type === 'place') placeBuckets[d].push(c);
       else blackBuckets[d].push(c);
     }
 
-    // flatten buckets starting from nearest to center for 'place', then 'black'
     const prioritized = [];
     for (let d = 0; d <= maxDist && prioritized.length < QUICK_LIMIT; d++) {
-      if (placeBuckets[d].length) {
-        for (const item of placeBuckets[d]) {
-          prioritized.push(item);
-          if (prioritized.length >= QUICK_LIMIT) break;
-        }
-      }
-    }
-    // if still room, take from black buckets (near to far)
-    for (let d = 0; d <= maxDist && prioritized.length < QUICK_LIMIT; d++) {
-      if (blackBuckets[d].length) {
-        for (const item of blackBuckets[d]) {
-          prioritized.push(item);
-          if (prioritized.length >= QUICK_LIMIT) break;
-        }
-      }
-    }
-
-    // In rare case buckets did not reach QUICK_LIMIT (shouldn't normally), fill with any leftovers
-    if (prioritized.length < QUICK_LIMIT) {
-      for (const c of candidates) {
+      for (const m of placeBuckets[d]) {
+        prioritized.push(m);
         if (prioritized.length >= QUICK_LIMIT) break;
-        if (!prioritized.includes(c)) prioritized.push(c);
+      }
+    }
+    for (let d = 0; d <= maxDist && prioritized.length < QUICK_LIMIT; d++) {
+      for (const m of blackBuckets[d]) {
+        prioritized.push(m);
+        if (prioritized.length >= QUICK_LIMIT) break;
       }
     }
 
@@ -304,7 +255,15 @@ export function greedyChoose(board, opts = { botHasBlack: false, regionFilter: n
   let bestScore = -Infinity;
 
   for (const mv of candidates) {
-    const sc = evaluateMoveQuality(board, mv, preAdj, preArtCount, preCompCount, preValidCounts, preDomainScore);
+    const sc = evaluateMoveQuality(
+      board,
+      mv,
+      preAdj,
+      preArtCount,
+      preCompCount,
+      preValidCounts,
+      preDomainScore
+    );
     const finalScore = sc + Math.random() * 1e-6;
     if (finalScore > bestScore) {
       bestScore = finalScore;
@@ -314,4 +273,3 @@ export function greedyChoose(board, opts = { botHasBlack: false, regionFilter: n
 
   return best;
 }
-
