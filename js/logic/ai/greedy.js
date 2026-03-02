@@ -67,22 +67,38 @@ function sumDomainScoreFromCounts(validCounts) {
 // ------------------------------------------------------------
 function getAffectedPositions(board, r, c) {
   const n = board.length;
+
+  // Use a Set to avoid duplicate positions
   const positions = new Set();
 
+  // 1️⃣ All cells in the same row and column
   for (let i = 0; i < n; i++) {
-    positions.add(`${r},${i}`);
-    positions.add(`${i},${c}`);
+    positions.add(`${r},${i}`); // same row
+    positions.add(`${i},${c}`); // same column
   }
 
-  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
-  for (const [dr, dc] of dirs) {
-    const nr = r + dr, nc = c + dc;
-    if (nr >= 0 && nr < n && nc >= 0 && nc < n) {
-      positions.add(`${nr},${nc}`);
+  // 2️⃣ Direct neighbors (up, down, left, right)
+  const directions = [
+    [0, 1],   // right
+    [0, -1],  // left
+    [1, 0],   // down
+    [-1, 0]   // up
+  ];
+
+  for (const [dr, dc] of directions) {
+    const newRow = r + dr;
+    const newCol = c + dc;
+
+    // Boundary check
+    if (newRow >= 0 && newRow < n && newCol >= 0 && newCol < n) {
+      positions.add(`${newRow},${newCol}`);
     }
   }
 
-  return Array.from(positions).map(k => k.split(',').map(Number));
+  // Convert "r,c" strings back into numeric [r, c] pairs
+  return Array.from(positions).map(pos =>
+    pos.split(',').map(Number)
+  );
 }
 
 // ------------------------------------------------------------

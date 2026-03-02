@@ -122,24 +122,14 @@ export function stopPulse(scene) {
  */
 export function flashTile(scene, r, c, color = 0xff4444) {
   const spr = scene.tileSprites[r][c];
-  // If we flash a tile, we temporarily pause the pulse logic if it's the selected one
-  // but usually flashing happens on invalid moves, so we just animate color.
-  
-  const origColor = scene.board[r][c].isBlack ? 0x07070a : 0x22222a; 
 
+  const origColor = scene.board[r][c].isBlack ? 0x07070a : 0x22222a;
+
+  // Flash red
   spr.bg.setFillStyle(color);
-  scene.time.delayedCall(300, () => {
-     // Restore original color
-     spr.bg.setFillStyle(origColor);
-  });
 
-  scene.tweens.add({
-    targets: [spr.bg, spr.txt],
-    x: '+=5',
-    duration: 50,
-    yoyo: true,
-    repeat: 3,
-    ease: 'Bounce.inOut'
+  scene.time.delayedCall(300, () => {
+    spr.bg.setFillStyle(origColor);
   });
 }
 
