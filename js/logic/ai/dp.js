@@ -1,183 +1,256 @@
 // js/logic/ai/dp.js
+// HARD MODE – Optimized (No Lag Version)
+// Strong AI + Tactical Black Usage + Alpha-Beta + DP
+
 import * as moves from '../moves.js';
-import * as rules from '../rules.js';
-import { cloneBoard } from '../board.js';
+
+const BOT = 2;
+const HUMAN = 1;
+const INF = 1e9;
+
+const MAX_DEPTH = 4;      // Safe strong depth
+const BASE_BRANCH = 10;   // Prevents explosion
 
 /* ============================================================
-   👤 MEMBER 1: State Representation & Hashing (DP Key)
-   - Serializes board
-   - Generates unique state key
+   MEMBER 1 – Transposition Table (DP Memoization)
 ============================================================ */
 
-function serializeCell(c) {
-  const val = c.isBlack ? 'B' : (c.value ?? '.');
-  const ineq = c.inequalities
-    ? `${c.inequalities.up ?? '.'}${c.inequalities.down ?? '.'}${c.inequalities.left ?? '.'}${c.inequalities.right ?? '.'}`
-    : '....';
-  return val + ineq;
-}
-
-function getBoardHash(board, currentPlayer, botHasBlack, playerHasBlack) {
-  const flat = board.map(row => row.map(c => serializeCell(c)).join('')).join('|');
-  return `${flat}|P${currentPlayer}|b${botHasBlack?1:0}|p${playerHasBlack?1:0}`;
-}
-
-
-/* ============================================================
-   👤 MEMBER 2: Evaluation & Move Ordering
-   - Heuristic scoring
-   - Move ranking
-============================================================ */
-
-function staticEval(board, botHasBlack, playerHasBlack) {
-  let score = 0;
-  const n = board.length;
-
-  for (let r = 0; r < n; r++) {
-    for (let c = 0; c < n; c++) {
-      const cell = board[r][c];
-      if (!cell.isBlack && cell.value !== null) score += 2;
-    }
+class TT {
+  constructor() {
+    this.map = new Map();
   }
 
-  const botLegal = moves.getLegalMoves(board, 2, { playerHasBlack: botHasBlack }).length;
-  const humanLegal = moves.getLegalMoves(board, 1, { playerHasBlack: playerHasBlack }).length;
+  hash(board, player, botBlack, humanBlack) {
+    let h = 19;
+    for (let r = 0; r < board.length; r++) {
+      for (let c = 0; c < board.length; c++) {
+        const cell = board[r][c];
+        const v = cell.isBlack ? 9 : (cell.value ?? 0);
+        h = (h * 37 + v) % 1000000007;
+      }
+    }
+    h = h * 3 + player;
+    h = h * 5 + (botBlack ? 1 : 0);
+    h = h * 7 + (humanBlack ? 1 : 0);
+    return h;
+  }
 
-  score += (botLegal - humanLegal) * 3;
+  get(key, depth) {
+    const entry = this.map.get(key);
+    if (!entry) return null;
+    if (entry.depth >= depth) return entry.score;
+    return null;
+  }
 
-  score += (botHasBlack ? 5 : 0);
-  score -= (playerHasBlack ? 5 : 0);
+  set(key, score, depth) {
+    this.map.set(key, { score, depth });
+  }
+}
+
+/* ============================================================
+   MEMBER 2 – Strong Evaluation (Mobility Dominance)
+============================================================ */
+
+function evaluate(board, botBlack, humanBlack) {
+
+  const botMoves = moves.getLegalMoves(board, BOT, {
+    playerHasBlack: botBlack
+  }).length;
+
+  const humanMoves = moves.getLegalMoves(board, HUMAN, {
+    playerHasBlack: humanBlack
+  }).length;
+
+  if (humanMoves === 0) return 1000000;
+  if (botMoves === 0) return -1000000;
+
+  let score = 0;
+
+  score += botMoves * 14;
+  score -= humanMoves * 20;
+
+  if (botBlack) score += 25;
+  if (humanBlack) score -= 25;
 
   return score;
 }
 
-function rankMoves(move) {
-  if (move.type === 'place') return 100 + (move.value || 0);
-  return 10;
-}
-
-
 /* ============================================================
-   👤 MEMBER 3: Backtracking Engine
-   - Apply move
-   - Revert move
-   - Branch limiting
+   MEMBER 3 – Tactical Move Ordering (Lightweight)
 ============================================================ */
 
-function applyMoveMutate(board, move) {
+function orderMoves(list, board) {
+
+  const total = board.length * board.length;
+  let filled = 0;
+
+  for (let r = 0; r < board.length; r++) {
+    for (let c = 0; c < board.length; c++) {
+      if (board[r][c].isBlack || board[r][c].value !== null)
+        filled++;
+    }
+  }
+
+  const phase = filled / total;
+
+  return list.sort((a, b) => {
+
+    function score(move) {
+      let s = 0;
+
+      if (move.type === 'place') {
+        s += 60 + (move.value || 0);
+      }
+
+      if (move.type === 'black') {
+        if (phase < 0.4)
+          s -= 100; // avoid early black
+        else
+          s += 60;  // allow later
+      }
+
+      return s;
+    }
+
+    return score(b) - score(a);
+  });
+}
+
+function apply(board, move) {
   const cell = board[move.r][move.c];
-  const prev = { r: move.r, c: move.c, prevValue: cell.value, prevBlack: cell.isBlack };
+  const prev = { r: move.r, c: move.c, v: cell.value, b: cell.isBlack };
 
   if (move.type === 'place') cell.value = move.value;
-  else if (move.type === 'black') cell.isBlack = true;
+  if (move.type === 'black') cell.isBlack = true;
 
   return prev;
 }
 
-function revertMove(board, prev) {
+function undo(board, prev) {
   const cell = board[prev.r][prev.c];
-  cell.value = prev.prevValue;
-  cell.isBlack = prev.prevBlack;
+  cell.value = prev.v;
+  cell.isBlack = prev.b;
 }
-
-function limitBranches(legalMoves, limit = 20) {
-  return legalMoves.slice(0, limit);
-}
-
 
 /* ============================================================
-   👤 MEMBER 4: Search Controller
-   - Minimax
-   - Alpha-Beta pruning
-   - Memoization integration
+   MEMBER 4 – Minimax + Alpha-Beta + Threat Detection
 ============================================================ */
 
-export function dpChoose(board, opts = { botHasBlack: false, playerHasBlack: true }, maxDepth = 3) {
-  const BOT_ID = 2;
-  const HUMAN_ID = 1;
+export function dpChoose(board, opts = { botHasBlack: false, playerHasBlack: true }) {
 
-  const memo = new Map();
+  const tt = new TT();
 
-  function minimax(stateBoard, currentPlayer, botBlack, humanBlack, depth, alpha, beta) {
+  // ---------- Immediate Win ----------
+  const botMovesNow = moves.getLegalMoves(board, BOT, {
+    playerHasBlack: opts.botHasBlack
+  }) || [];
 
-    const key = getBoardHash(stateBoard, currentPlayer, botBlack, humanBlack);
-    if (memo.has(key)) return memo.get(key);
+  for (const mv of botMovesNow) {
+    const prev = apply(board, mv);
+    const humanMoves = moves.getLegalMoves(board, HUMAN, {
+      playerHasBlack: opts.playerHasBlack
+    }).length;
+    undo(board, prev);
+    if (humanMoves === 0) return mv;
+  }
 
-    const hasBlack = currentPlayer === BOT_ID ? botBlack : humanBlack;
+  // ---------- Block Human Immediate Win ----------
+  const humanMovesNow = moves.getLegalMoves(board, HUMAN, {
+    playerHasBlack: opts.playerHasBlack
+  }) || [];
 
-    let legal = moves.getSortedLegalMoves(stateBoard, currentPlayer, { playerHasBlack: hasBlack }) || [];
-
-    // Apply ranking from Member 2
-    legal.sort((a, b) => rankMoves(b) - rankMoves(a));
-
-    if (legal.length === 0) {
-      const score = currentPlayer === BOT_ID ? -10000 + depth : 10000 - depth;
-      const res = { score, move: null };
-      memo.set(key, res);
-      return res;
-    }
-
-    if (depth === 0) {
-      const score = staticEval(stateBoard, botBlack, humanBlack);
-      const res = { score, move: null };
-      memo.set(key, res);
-      return res;
-    }
-
-    legal = limitBranches(legal, 20);
-
-    let bestMove = null;
-
-    if (currentPlayer === BOT_ID) {
-      let maxEval = -Infinity;
-
-      for (const m of legal) {
-        const prev = applyMoveMutate(stateBoard, m);
-        const nextBotBlack = (m.type === 'black') ? false : botBlack;
-
-        const child = minimax(stateBoard, HUMAN_ID, nextBotBlack, humanBlack, depth - 1, alpha, beta);
-
-        revertMove(stateBoard, prev);
-
-        if (child.score > maxEval) {
-          maxEval = child.score;
-          bestMove = m;
-        }
-
-        alpha = Math.max(alpha, maxEval);
-        if (beta <= alpha) break;
-      }
-
-      const res = { score: maxEval, move: bestMove };
-      memo.set(key, res);
-      return res;
-
-    } else {
-      let minEval = Infinity;
-
-      for (const m of legal) {
-        const prev = applyMoveMutate(stateBoard, m);
-        const nextHumanBlack = (m.type === 'black') ? false : humanBlack;
-
-        const child = minimax(stateBoard, BOT_ID, botBlack, nextHumanBlack, depth - 1, alpha, beta);
-
-        revertMove(stateBoard, prev);
-
-        if (child.score < minEval) {
-          minEval = child.score;
-          bestMove = m;
-        }
-
-        beta = Math.min(beta, minEval);
-        if (beta <= alpha) break;
-      }
-
-      const res = { score: minEval, move: bestMove };
-      memo.set(key, res);
-      return res;
+  for (const hm of humanMovesNow) {
+    const prev = apply(board, hm);
+    const botAfter = moves.getLegalMoves(board, BOT, {
+      playerHasBlack: opts.botHasBlack
+    }).length;
+    undo(board, prev);
+    if (botAfter === 0) {
+      const block = botMovesNow.find(m => m.r === hm.r && m.c === hm.c);
+      if (block) return block;
     }
   }
 
-  const root = minimax(board, BOT_ID, opts.botHasBlack, opts.playerHasBlack, maxDepth, -Infinity, Infinity);
-  return root.move;
+  function minimax(state, player, botBlack, humanBlack, depth, alpha, beta) {
+
+    if (depth <= 0)
+      return evaluate(state, botBlack, humanBlack);
+
+    const key = tt.hash(state, player, botBlack, humanBlack);
+    const cached = tt.get(key, depth);
+    if (cached !== null) return cached;
+
+    let legal = moves.getLegalMoves(state, player, {
+      playerHasBlack: player === BOT ? botBlack : humanBlack
+    }) || [];
+
+    if (legal.length === 0)
+      return evaluate(state, botBlack, humanBlack);
+
+    const branchLimit = depth >= 3 ? BASE_BRANCH : BASE_BRANCH + 3;
+
+    legal = orderMoves(legal, state).slice(0, branchLimit);
+
+    let best = (player === BOT) ? -INF : INF;
+
+    for (const move of legal) {
+
+      const prev = apply(state, move);
+
+      const val = minimax(
+        state,
+        player === BOT ? HUMAN : BOT,
+        move.type === 'black' && player === BOT ? false : botBlack,
+        move.type === 'black' && player === HUMAN ? false : humanBlack,
+        depth - 1,
+        alpha,
+        beta
+      );
+
+      undo(state, prev);
+
+      if (player === BOT) {
+        best = Math.max(best, val);
+        alpha = Math.max(alpha, best);
+      } else {
+        best = Math.min(best, val);
+        beta = Math.min(beta, best);
+      }
+
+      if (beta <= alpha) break;
+    }
+
+    tt.set(key, best, depth);
+    return best;
+  }
+
+  let bestMove = null;
+  let bestVal = -INF;
+
+  let rootMoves = orderMoves(botMovesNow, board)
+    .slice(0, BASE_BRANCH + 3);
+
+  for (const mv of rootMoves) {
+
+    const prev = apply(board, mv);
+
+    const val = minimax(
+      board,
+      HUMAN,
+      mv.type === 'black' ? false : opts.botHasBlack,
+      opts.playerHasBlack,
+      MAX_DEPTH - 1,
+      -INF,
+      INF
+    );
+
+    undo(board, prev);
+
+    if (val > bestVal) {
+      bestVal = val;
+      bestMove = mv;
+    }
+  }
+
+  return bestMove;
 }
